@@ -1,0 +1,104 @@
+{
+  "session_id": "final01",
+  "chunk_duration_seconds": 2.5,
+  "sample_rate": 16000,
+  "channels": 1,
+  "recorder_backend": "mock",
+  "transcriber_backend": "mock",
+  "vad_backend": "mock",
+  "refinement_backend": "disabled",
+  "chunks": [
+    {
+      "index": 1,
+      "audio_file": "chunk_0001.wav",
+      "audio_path": "D:\\D盘桌面程序\\作业\\UAM毕业论文\\TFM\\samples\\final01\\raw\\chunk_0001.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "voice",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "sample",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "loop",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "audio_file": "chunk_0002.wav",
+      "audio_path": "D:\\D盘桌面程序\\作业\\UAM毕业论文\\TFM\\samples\\final01\\raw\\chunk_0002.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "sample",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "loop",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "phrase",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "audio_file": "chunk_0003.wav",
+      "audio_path": "D:\\D盘桌面程序\\作业\\UAM毕业论文\\TFM\\samples\\final01\\raw\\chunk_0003.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "loop",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "phrase",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "pulse",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "audio_file": "chunk_0004.wav",
+      "audio_path": "D:\\D盘桌面程序\\作业\\UAM毕业论文\\TFM\\samples\\final01\\raw\\chunk_0004.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "phrase",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "pulse",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "echo",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    }
+  ]
+}

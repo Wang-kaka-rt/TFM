@@ -1,0 +1,18 @@
+# Node.js dependencies
+**/node_modules/
+**/.pnpm-store/
+**/.npm/
+**/.yarn/
+
+# Python dependencies and caches
+**/.venv/
+**/venv/
+**/env/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/*.pyc
+
+# Common temporary/cache artifacts
+**/.DS_Store
+**/Thumbs.db

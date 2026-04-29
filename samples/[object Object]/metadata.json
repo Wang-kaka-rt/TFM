@@ -1,0 +1,196 @@
+{
+  "session_id": "[object Object]",
+  "chunk_duration_seconds": 2.5,
+  "sample_rate": 16000,
+  "channels": 1,
+  "recorder_backend": "microphone",
+  "transcriber_backend": "mock",
+  "vad_backend": "silero",
+  "refinement_backend": "disabled",
+  "chunks": [
+    {
+      "index": 1,
+      "audio_file": "chunk_0001.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0001.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "voice",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "sample",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "loop",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "audio_file": "chunk_0002.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0002.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "sample",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "loop",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "phrase",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "audio_file": "chunk_0003.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0003.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "loop",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "phrase",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "pulse",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "audio_file": "chunk_0004.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0004.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "phrase",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "pulse",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "echo",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "audio_file": "chunk_0005.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0005.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "pulse",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "echo",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "groove",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "audio_file": "chunk_0006.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0006.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "echo",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "groove",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "strudel",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "audio_file": "chunk_0007.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0007.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "groove",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "strudel",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "voice",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "audio_file": "chunk_0008.wav",
+      "audio_path": "..\\..\\samples\\[object Object]\\raw\\chunk_0008.wav",
+      "duration_seconds": 2.5,
+      "words": [
+        {
+          "word": "strudel",
+          "start": 0.0,
+          "end": 0.833
+        },
+        {
+          "word": "voice",
+          "start": 0.833,
+          "end": 1.667
+        },
+        {
+          "word": "sample",
+          "start": 1.667,
+          "end": 2.5
+        }
+      ]
+    }
+  ]
+}

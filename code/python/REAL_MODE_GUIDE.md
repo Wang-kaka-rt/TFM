@@ -25,10 +25,12 @@
 
 ## 3) VAD: silero
 - Install dependency:
-  - `py -m pip install torch`
+  - `py -m pip install silero-vad torch`
 - Update `.env`:
   - `STRUDEL_ENABLE_VAD=true`
   - `STRUDEL_VAD_BACKEND=silero`
+  - `STRUDEL_SILERO_SAMPLE_RATE=16000`
+  - `STRUDEL_SILERO_SPEECH_THRESHOLD=0.5`
 
 ## 4) Refinement: whisperx
 - Install dependency:
@@ -36,6 +38,9 @@
 - Update `.env`:
   - `STRUDEL_ENABLE_REFINEMENT=true`
   - `STRUDEL_REFINEMENT_BACKEND=whisperx`
+  - `STRUDEL_WHISPERX_MODEL=small`
+  - `STRUDEL_WHISPERX_DEVICE=cpu`
+  - `STRUDEL_WHISPERX_COMPUTE_TYPE=int8`
 
 ## 5) Verify flow
 ```powershell

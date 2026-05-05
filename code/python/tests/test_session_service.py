@@ -42,5 +42,13 @@ def test_session_service_generates_artifacts(tmp_path):
     samples = json.loads(samples_path.read_text(encoding="utf-8"))
 
     assert len(metadata["chunks"]) == 2
+    assert "processing_latency_seconds" in metadata["chunks"][0]
+    assert "raw_word_count" in metadata["chunks"][0]
+    assert "exported_word_count" in metadata["chunks"][0]
     assert len(samples["words"]) == session.word_count
     assert samples["session_id"] == "test01"
+    metrics = service.get_metrics()
+    assert "avg_chunk_latency_ms" in metrics
+    assert "p95_chunk_latency_ms" in metrics
+    assert "word_retention_percent" in metrics
+    assert "slice_success_rate_percent" in metrics

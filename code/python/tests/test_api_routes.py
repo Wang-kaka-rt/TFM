@@ -50,3 +50,18 @@ def test_start_reload_stop_and_artifact_endpoints(tmp_path):
     metrics_response = client.get("/metrics")
     assert metrics_response.status_code == 200
     assert metrics_response.json()["session_count"] >= 1
+
+
+def test_start_rejects_invalid_session_id(tmp_path):
+    test_service = SessionService(
+        Settings(
+            samples_root=tmp_path / "samples",
+            recorder_backend="mock",
+            transcriber_backend="mock",
+        )
+    )
+    routes.session_service = test_service
+    client = TestClient(app)
+
+    response = client.post("/start", json={"session_id": "[object Object]"})
+    assert response.status_code == 422

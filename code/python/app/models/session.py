@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from enum import Enum
+import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def utc_now() -> datetime:
@@ -19,13 +20,33 @@ class SessionState(str, Enum):
 class StartSessionRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=64)
 
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str) -> str:
+        session_id = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", session_id):
+            raise ValueError("session_id must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+        if session_id.lower() == "object_object":
+            raise ValueError("invalid session_id")
+        return session_id
+
 
 class StopSessionRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=64)
 
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str) -> str:
+        return StartSessionRequest.validate_session_id(value)
+
 
 class ReloadSessionRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=64)
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, value: str) -> str:
+        return StartSessionRequest.validate_session_id(value)
 
 
 class SessionInfo(BaseModel):

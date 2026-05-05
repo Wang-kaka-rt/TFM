@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import sys
+import time
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,6 +60,8 @@ class ChunkRecord:
     index: int
     audio_path: Path
     duration_seconds: float
+    processing_latency_seconds: float = 0.0
+    raw_word_count: int = 0
     words: list[WordTiming] = field(default_factory=list)
 
 
@@ -126,11 +129,21 @@ class SessionService:
         self._vad: BaseVoiceActivityDetector = create_vad(
             settings.vad_backend,
             settings.min_word_duration_seconds,
+            silero_sample_rate=settings.silero_sample_rate,
+            silero_speech_threshold=settings.silero_speech_threshold,
         )
         self._aggregator = NlpAggregator(settings.phrase_group_size)
-        self._refiner: BaseRefiner = create_refiner(settings.refinement_backend)
+        self._refiner: BaseRefiner = create_refiner(
+            settings.refinement_backend,
+            whisperx_model=settings.whisperx_model,
+            whisperx_device=settings.whisperx_device,
+            whisperx_compute_type=settings.whisperx_compute_type,
+        )
         self._runtimes: dict[str, SessionRuntime] = {}
         self._lock = asyncio.Lock()
+        self._chunk_processing_latencies: list[float] = []
+        self._slice_export_attempts = 0
+        self._slice_export_failures = 0
         self._settings.samples_root.mkdir(parents=True, exist_ok=True)
 
     async def start(self, session_id: str) -> SessionInfo:
@@ -211,6 +224,14 @@ class SessionService:
 
     def get_metrics(self) -> dict[str, int]:
         sessions = self._manager.all()
+        total_raw_words = sum(chunk.raw_word_count for runtime in self._runtimes.values() for chunk in runtime.chunks)
+        total_exported_words = sum(len(chunk.words) for runtime in self._runtimes.values() for chunk in runtime.chunks)
+        avg_latency_ms = int((sum(self._chunk_processing_latencies) / len(self._chunk_processing_latencies)) * 1000) if self._chunk_processing_latencies else 0
+        p95_latency_ms = int(sorted(self._chunk_processing_latencies)[int(0.95 * (len(self._chunk_processing_latencies) - 1))] * 1000) if self._chunk_processing_latencies else 0
+        word_retention_percent = int((total_exported_words * 100) / total_raw_words) if total_raw_words else 0
+        slice_success_rate_percent = int(
+            ((self._slice_export_attempts - self._slice_export_failures) * 100) / self._slice_export_attempts
+        ) if self._slice_export_attempts else 100
         return {
             "session_count": len(sessions),
             "active_session_count": 0 if self._manager.active() is None else 1,
@@ -218,6 +239,10 @@ class SessionService:
             "total_words": sum(item.word_count for item in sessions),
             "total_phrases": sum(item.phrase_count for item in sessions),
             "total_sentences": sum(item.sentence_count for item in sessions),
+            "avg_chunk_latency_ms": avg_latency_ms,
+            "p95_chunk_latency_ms": p95_latency_ms,
+            "word_retention_percent": word_retention_percent,
+            "slice_success_rate_percent": slice_success_rate_percent,
         }
 
     async def _record_session(self, runtime: SessionRuntime) -> None:
@@ -226,6 +251,7 @@ class SessionService:
                 if runtime.stop_event.is_set():
                     break
 
+                start_time = time.perf_counter()
                 file_name = f"{self._settings.mock_chunk_prefix}_{chunk_index:04d}.wav"
                 audio_path = runtime.raw_dir / file_name
                 audio_info = await asyncio.to_thread(
@@ -241,12 +267,17 @@ class SessionService:
                     audio_path,
                     chunk_index=chunk_index,
                 )
+                raw_word_count = len(words)
                 if self._settings.enable_vad:
-                    words = self._vad.filter_words(words)
+                    words = self._vad.filter_words(words, audio_path)
+                processing_latency = max(0.0, time.perf_counter() - start_time)
+                self._chunk_processing_latencies.append(processing_latency)
                 chunk = ChunkRecord(
                     index=chunk_index,
                     audio_path=audio_path,
                     duration_seconds=audio_info.duration_seconds,
+                    processing_latency_seconds=processing_latency,
+                    raw_word_count=raw_word_count,
                     words=words,
                 )
                 runtime.chunks.append(chunk)
@@ -287,7 +318,10 @@ class SessionService:
     def _export_word_samples(self, runtime: SessionRuntime, chunk: ChunkRecord) -> None:
         for word_index, word in enumerate(chunk.words, start=1):
             word_file = runtime.words_dir / f"word_{chunk.index:04d}_{word_index:02d}_{word.word}.wav"
-            export_wav_slice(chunk.audio_path, word_file, word.start, word.end)
+            self._slice_export_attempts += 1
+            ok = export_wav_slice(chunk.audio_path, word_file, word.start, word.end)
+            if not ok:
+                self._slice_export_failures += 1
 
     def _write_artifacts(self, runtime: SessionRuntime) -> None:
         word_samples = self._collect_word_samples(runtime)
@@ -309,6 +343,9 @@ class SessionService:
                     "audio_file": chunk.audio_path.name,
                     "audio_path": str(chunk.audio_path),
                     "duration_seconds": chunk.duration_seconds,
+                            "processing_latency_seconds": round(chunk.processing_latency_seconds, 4),
+                            "raw_word_count": chunk.raw_word_count,
+                            "exported_word_count": len(chunk.words),
                     "words": [
                         {
                             "word": word.word,
@@ -452,28 +489,35 @@ class SessionService:
         self._manager.fail(runtime.session_id, str(exception))
 
 
-def export_wav_slice(source_path: Path, target_path: Path, start_seconds: float, end_seconds: float) -> None:
+def export_wav_slice(source_path: Path, target_path: Path, start_seconds: float, end_seconds: float) -> bool:
     if AudioSegment is not None:
-        segment = AudioSegment.from_file(source_path)
-        clip = segment[int(max(0.0, start_seconds) * 1000) : int(max(start_seconds + 0.001, end_seconds) * 1000)]
-        clip.export(target_path, format="wav")
-        return
+        try:
+            segment = AudioSegment.from_file(source_path)
+            clip = segment[int(max(0.0, start_seconds) * 1000) : int(max(start_seconds + 0.001, end_seconds) * 1000)]
+            clip.export(target_path, format="wav")
+            return True
+        except Exception:
+            return False
 
-    with wave.open(str(source_path), "rb") as source:
-        sample_rate = source.getframerate()
-        channels = source.getnchannels()
-        sample_width = source.getsampwidth()
-        start_frame = max(0, int(start_seconds * sample_rate))
-        end_frame = max(start_frame + 1, int(end_seconds * sample_rate))
-        source.setpos(min(start_frame, source.getnframes()))
-        frame_count = max(1, min(end_frame, source.getnframes()) - start_frame)
-        frames = source.readframes(frame_count)
+    try:
+        with wave.open(str(source_path), "rb") as source:
+            sample_rate = source.getframerate()
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            start_frame = max(0, int(start_seconds * sample_rate))
+            end_frame = max(start_frame + 1, int(end_seconds * sample_rate))
+            source.setpos(min(start_frame, source.getnframes()))
+            frame_count = max(1, min(end_frame, source.getnframes()) - start_frame)
+            frames = source.readframes(frame_count)
 
-    with wave.open(str(target_path), "wb") as target:
-        target.setnchannels(channels)
-        target.setsampwidth(sample_width)
-        target.setframerate(sample_rate)
-        target.writeframes(frames)
+        with wave.open(str(target_path), "wb") as target:
+            target.setnchannels(channels)
+            target.setsampwidth(sample_width)
+            target.setframerate(sample_rate)
+            target.writeframes(frames)
+        return True
+    except Exception:
+        return False
 
 
 def build_strudel_script(

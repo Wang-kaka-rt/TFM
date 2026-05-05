@@ -36,9 +36,14 @@ class Settings(BaseSettings):
     vad_backend: str = "mock"
     enable_vad: bool = True
     min_word_duration_seconds: float = 0.04
+    silero_sample_rate: int = 16_000
+    silero_speech_threshold: float = 0.5
     phrase_group_size: int = 2
     enable_refinement: bool = False
     refinement_backend: str = "mock"
+    whisperx_model: str = "small"
+    whisperx_device: str = "cpu"
+    whisperx_compute_type: str = "int8"
     mock_transcript_words: list[str] = Field(
         default_factory=lambda: [
             "strudel",

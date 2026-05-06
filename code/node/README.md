@@ -3,7 +3,7 @@
 ## Current scope
 - Sprint 0 integration scaffold
 - NestJS bridge service
-- Proxy endpoints for `start`, `reload`, `stop`, `status`
+- Proxy endpoints for `start`, `stop`, `status`
 - Artifact and metrics proxy: script, samples, metadata, metrics
 
 ## Run
@@ -20,7 +20,6 @@ npm run start:dev
 ## Available endpoints
 - `GET /health`
 - `POST /strudel/start`
-- `POST /strudel/reload`
 - `POST /strudel/stop`
 - `GET /strudel/status`
 - `GET /strudel/metrics`

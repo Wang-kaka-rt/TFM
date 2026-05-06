@@ -1,31 +1,39 @@
-# 依赖安装与构建命令
+# Build Commands
 
-## 1) Node 桥接服务（NestJS）
+## Python backend dependencies
 
-```bash
-cd code/node
+```powershell
+cd code\python
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pip install -r requirements.txt
+```
+
+For real microphone and ASR mode:
+
+```powershell
+cd code\python
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pip install -r requirements.realtime.txt
+```
+
+## Python tests
+
+```powershell
+cd code\python
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pytest -q
+```
+
+## Node bridge
+
+```powershell
+cd code\node
 npm install
 npm run build
 ```
 
-## 2) Python 服务
+## Desktop EXE
 
-```bash
-cd code/python
-py -m pip install -r requirements.txt
+```powershell
+cd code\python
+powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1 -SkipSyncStrudel
 ```
 
-## 3) Python 打包构建 EXE
-
-```bash
-cd code/python
-powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1
-```
-
-## 4) Strudel 前端（可选）
-
-```bash
-cd code/strudel-src-real
-pnpm i
-npm run build
-```
+Add `-IncludeHeavyAsr` only when you want to package the heavier real ASR dependencies.

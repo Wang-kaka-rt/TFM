@@ -6,7 +6,7 @@ from app.main import app
 from app.services.session_service import SessionService
 
 
-def test_start_reload_stop_and_artifact_endpoints(tmp_path):
+def test_start_stop_and_artifact_endpoints(tmp_path):
     test_service = SessionService(
         Settings(
             samples_root=tmp_path / "samples",
@@ -33,15 +33,19 @@ def test_start_reload_stop_and_artifact_endpoints(tmp_path):
     stop_response = client.post("/stop", json={"session_id": "api01"})
     assert stop_response.status_code == 200
 
-    reload_response = client.post("/reload", json={"session_id": "api01"})
-    assert reload_response.status_code == 200
-
     script_response = client.get("/strudel/api01")
     assert script_response.status_code == 200
 
     samples_response = client.get("/samples/api01/manifest")
     assert samples_response.status_code == 200
     assert "words" in samples_response.json()
+
+    sample_path = test_service._settings.samples_root / "api01" / "sentences" / "sentence_0001.wav"
+    sample_path.parent.mkdir(parents=True, exist_ok=True)
+    sample_path.write_bytes(b"RIFF$\x00\x00\x00WAVEfmt ")
+    sample_file_response = client.get("/samples/api01/sentences/sentence_0001.wav")
+    assert sample_file_response.status_code == 200
+    assert sample_file_response.headers["content-type"].startswith("audio/wav")
 
     metadata_response = client.get("/metadata/api01")
     assert metadata_response.status_code == 200

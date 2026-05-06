@@ -23,6 +23,7 @@ class SessionManager:
             "words_dir": paths["words_dir"],
             "phrases_dir": paths["phrases_dir"],
             "sentences_dir": paths["sentences_dir"],
+            "letters_dir": paths["letters_dir"],
             "metadata_path": paths["metadata_path"],
             "samples_path": paths["samples_path"],
             "strudel_script_path": paths["strudel_script_path"],
@@ -45,6 +46,7 @@ class SessionManager:
                     "word_count": 0,
                     "phrase_count": 0,
                     "sentence_count": 0,
+                    "letter_count": 0,
                 }
             )
 
@@ -93,17 +95,6 @@ class SessionManager:
             self._active_session_id = None
         return updated
 
-    def reload(self, session_id: str) -> SessionInfo:
-        session = self.require(session_id)
-        updated = session.model_copy(
-            update={
-                "updated_at": utc_now(),
-                "last_event": "reloaded",
-            }
-        )
-        self._sessions[session_id] = updated
-        return updated
-
     def update_counts(
         self,
         session_id: str,
@@ -112,6 +103,7 @@ class SessionManager:
         word_count: int,
         phrase_count: int,
         sentence_count: int,
+        letter_count: int,
     ) -> SessionInfo:
         session = self.require(session_id)
         updated = session.model_copy(
@@ -121,6 +113,7 @@ class SessionManager:
                 "word_count": word_count,
                 "phrase_count": phrase_count,
                 "sentence_count": sentence_count,
+                "letter_count": letter_count,
             }
         )
         self._sessions[session_id] = updated

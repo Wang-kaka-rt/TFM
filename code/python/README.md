@@ -1,36 +1,43 @@
 # Strudel Voice Python Backend
 
 ## Current scope
-- Sprint 0-4 implemented: API flow, chunk export, artifacts, static service, metrics, tests
-- Sprint 5 packaging ready: PyInstaller + PyWebView launcher with startup retry and log files
+
+- FastAPI API for starting, stopping, and checking recording sessions.
+- Mock and real recorder backends.
+- Mock and faster-whisper transcription backends.
+- Optional Silero VAD and WhisperX refinement.
+- Artifact generation for words, phrases, sentences, letters, metadata, sample manifest, and Strudel import script.
+- Static Strudel asset serving.
+- PyInstaller launcher support.
+
+## Install
+
+```powershell
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pip install -r requirements.txt
+```
+
+For microphone and ASR mode:
+
+```powershell
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pip install -r requirements.realtime.txt
+```
 
 ## Run
-```bash
-py -m pip install -r requirements.txt
-py -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
-```
 
-## Realtime mode (microphone + faster-whisper)
-- Install realtime dependencies:
-```bash
-py -m pip install -r requirements.realtime.txt
-```
-- Copy `.env.realtime.example` to `.env` and adjust `STRUDEL_MICROPHONE_DEVICE` if needed.
-- Note: if optional dependencies are missing, backend now auto-falls back to `mock` and keeps running.
-
-## Final acceptance
 ```powershell
-cd ..\scripts
-pwsh -ExecutionPolicy Bypass -File .\final_acceptance.ps1
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
 ```
 
-## Config template
-- Copy `.env.example` to `.env` and edit values as needed.
+Open:
 
-## Available endpoints
+```text
+http://127.0.0.1:8787/
+```
+
+## Endpoints
+
 - `GET /health`
 - `POST /start`
-- `POST /reload`
 - `POST /stop`
 - `GET /status`
 - `GET /strudel/{session_id}`
@@ -38,38 +45,28 @@ pwsh -ExecutionPolicy Bypass -File .\final_acceptance.ps1
 - `GET /metadata/{session_id}`
 - `GET /metrics`
 
-## Useful env vars
+## Test
+
+```powershell
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pytest -q
+```
+
+## Acceptance
+
+```powershell
+cd ..\scripts
+powershell -ExecutionPolicy Bypass -File .\final_acceptance.ps1 -SessionId final01
+```
+
+## Important environment variables
+
 - `STRUDEL_RECORDER_BACKEND=mock|microphone`
 - `STRUDEL_TRANSCRIBER_BACKEND=mock|faster-whisper`
-- `STRUDEL_FASTER_WHISPER_MODEL=base|small|medium|...`
-- `STRUDEL_FASTER_WHISPER_DEVICE=auto|cpu|cuda`
-- `STRUDEL_FASTER_WHISPER_COMPUTE_TYPE=int8|float16|float32`
-- `STRUDEL_FASTER_WHISPER_BEAM_SIZE=1|2|...`
 - `STRUDEL_VAD_BACKEND=mock|silero`
-- `STRUDEL_SILERO_SAMPLE_RATE=16000`
-- `STRUDEL_SILERO_SPEECH_THRESHOLD=0.5`
+- `STRUDEL_ENABLE_VAD=true|false`
 - `STRUDEL_ENABLE_REFINEMENT=true|false`
 - `STRUDEL_REFINEMENT_BACKEND=mock|whisperx`
-- `STRUDEL_WHISPERX_MODEL=small|medium|...`
-- `STRUDEL_WHISPERX_DEVICE=cpu|cuda`
-- `STRUDEL_WHISPERX_COMPUTE_TYPE=int8|float16|float32`
-- `STRUDEL_MICROPHONE_DEVICE=<input-device-index>`
-- `STRUDEL_SAMPLES_ROOT=...`
-- `STRUDEL_MAX_CHUNKS_PER_SESSION=...`
-- `STRUDEL_CHUNK_DURATION_SECONDS=...`
+- `STRUDEL_SAMPLES_ROOT=../../samples`
+- `STRUDEL_STRUDEL_BASE_URL=http://127.0.0.1:8787`
 
-## Example request
-```bash
-curl -X POST http://127.0.0.1:8787/start ^
-  -H "Content-Type: application/json" ^
-  -d "{\"session_id\":\"test01\"}"
-```
-
-## Strudel commands in editor
-- The launcher injects `strudelVoiceStart`, `strudelVoiceReload`, `strudelVoiceStop` automatically.
-- Run these in the Strudel editor:
-```javascript
-await strudelVoiceStart()
-await strudelVoiceReload()
-await strudelVoiceStop()
-```
+Relative `STRUDEL_SAMPLES_ROOT` values are resolved from this `code/python` directory, so the service writes to the same place even if it is launched from a different working directory.

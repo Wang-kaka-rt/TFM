@@ -7,6 +7,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
+SPANISH_TOKEN_CORRECTIONS = {
+    "ula": "hola",
+    "ola": "hola",
+}
+
+
 @dataclass(slots=True)
 class WordTiming:
     word: str
@@ -31,7 +37,7 @@ class MockTranscriber(BaseTranscriber):
         words: list[WordTiming] = []
         for index in range(token_count):
             seed = self._seed_words[(chunk_index + index) % len(self._seed_words)]
-            token = re.sub(r"[^a-zA-Z0-9_-]", "", seed).lower() or f"word{index + 1}"
+            token = clean_token(seed) or f"palabra{index + 1}"
             start = round(index * step, 3)
             end = round(duration if index == token_count - 1 else (index + 1) * step, 3)
             words.append(WordTiming(word=token, start=start, end=end))
@@ -46,6 +52,10 @@ class FasterWhisperTranscriber(BaseTranscriber):
         device: str = "auto",
         compute_type: str = "int8",
         beam_size: int = 1,
+        language: str | None = "es",
+        initial_prompt: str | None = None,
+        hotwords: str | None = None,
+        fallback_words: list[str] | None = None,
     ) -> None:
         try:
             from faster_whisper import WhisperModel  # type: ignore
@@ -55,17 +65,24 @@ class FasterWhisperTranscriber(BaseTranscriber):
             ) from exc
         self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
         self._beam_size = max(1, beam_size)
+        self._language = language or None
+        self._initial_prompt = initial_prompt or None
+        self._hotwords = hotwords or None
+        self._fallback_words = fallback_words or ["hola", "ritmo", "voz"]
 
     def transcribe(self, audio_path: Path, *, chunk_index: int) -> list[WordTiming]:
         segments, _ = self._model.transcribe(
             str(audio_path),
             word_timestamps=True,
             beam_size=self._beam_size,
+            language=self._language,
+            initial_prompt=self._initial_prompt,
+            hotwords=self._hotwords,
         )
         words: list[WordTiming] = []
         for segment in segments:
             for word in getattr(segment, "words", []) or []:
-                token = re.sub(r"[^a-zA-Z0-9_-]", "", word.word).lower()
+                token = clean_token(word.word)
                 if not token:
                     continue
                 start = 0.0 if word.start is None else float(word.start)
@@ -74,7 +91,7 @@ class FasterWhisperTranscriber(BaseTranscriber):
 
         if words:
             return words
-        return MockTranscriber(["fallback", "token", str(chunk_index)]).transcribe(
+        return MockTranscriber(self._fallback_words).transcribe(
             audio_path,
             chunk_index=chunk_index,
         )
@@ -88,6 +105,9 @@ def create_transcriber(
     faster_whisper_device: str = "auto",
     faster_whisper_compute_type: str = "int8",
     faster_whisper_beam_size: int = 1,
+    transcriber_language: str | None = "es",
+    transcriber_initial_prompt: str | None = None,
+    transcriber_hotwords: str | None = None,
 ) -> BaseTranscriber:
     if backend == "faster-whisper":
         return FasterWhisperTranscriber(
@@ -95,8 +115,17 @@ def create_transcriber(
             device=faster_whisper_device,
             compute_type=faster_whisper_compute_type,
             beam_size=faster_whisper_beam_size,
+            language=transcriber_language,
+            initial_prompt=transcriber_initial_prompt,
+            hotwords=transcriber_hotwords,
+            fallback_words=seed_words,
         )
     return MockTranscriber(seed_words)
+
+
+def clean_token(value: str) -> str:
+    token = re.sub(r"_+", "_", re.sub(r"[^\w-]+", "_", value, flags=re.UNICODE)).strip("_").lower()
+    return SPANISH_TOKEN_CORRECTIONS.get(token, token)
 
 
 def get_wav_duration(audio_path: Path) -> float:

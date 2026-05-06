@@ -1,20 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all
 
 datas = [('static', 'static')]
+binaries = []
+hiddenimports = ['uvicorn', 'uvicorn.config', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'webview', 'app.main', 'app.api.routes', 'faster_whisper', 'ctranslate2', 'tokenizers', 'huggingface_hub', 'av']
 datas += collect_data_files('app')
+tmp_ret = collect_all('faster_whisper')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('ctranslate2')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('tokenizers')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['packaging\\launcher.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
-    hiddenimports=['uvicorn', 'uvicorn.config', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'webview', 'app.main', 'app.api.routes'],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch', 'whisperx', 'faster_whisper'],
+    excludes=['torch', 'whisperx', 'tensorflow', 'keras', 'tf_keras', 'pandas', 'pyarrow', 'scipy', 'sklearn', 'cv2', 'numba', 'llvmlite', 'matplotlib', 'IPython', 'jupyter_client', 'pytest'],
     noarchive=False,
     optimize=0,
 )

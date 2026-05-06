@@ -26,6 +26,13 @@ class NlpAggregator:
         self._phrase_group_size = max(1, phrase_group_size)
 
     def to_phrases(self, words: list[WordTiming]) -> list[PhraseTiming]:
+        if not words:
+            return []
+        # Prefer pause-based grouping so phrases follow natural speech breaks.
+        pause_split_phrases = self._to_phrases_by_pause(words)
+        if pause_split_phrases:
+            return pause_split_phrases
+
         phrases: list[PhraseTiming] = []
         buffer: list[WordTiming] = []
         for word in words:
@@ -46,6 +53,25 @@ class NlpAggregator:
             end=words[-1].end,
             words=[item.word for item in words],
         )
+
+    def _to_phrases_by_pause(self, words: list[WordTiming]) -> list[PhraseTiming]:
+        if not words:
+            return []
+        max_gap_seconds = 0.35
+        max_words_per_phrase = max(2, self._phrase_group_size + 1)
+        phrases: list[PhraseTiming] = []
+        buffer: list[WordTiming] = [words[0]]
+        for word in words[1:]:
+            previous = buffer[-1]
+            gap = max(0.0, word.start - previous.end)
+            if gap >= max_gap_seconds or len(buffer) >= max_words_per_phrase:
+                phrases.append(self._build_phrase(buffer))
+                buffer = [word]
+                continue
+            buffer.append(word)
+        if buffer:
+            phrases.append(self._build_phrase(buffer))
+        return phrases
 
     def _build_phrase(self, words: list[WordTiming]) -> PhraseTiming:
         return PhraseTiming(

@@ -30,6 +30,11 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1 -IncludeHeavyAsr
 - If backend startup fails, launcher retries automatically and writes logs to:
   - `%LOCALAPPDATA%\StrudelVoice\logs\launcher.log`
   - `%LOCALAPPDATA%\StrudelVoice\logs\backend.log`
+- Runtime `.env` lookup order:
+  - EXE directory (`dist/.env`)
+  - current working directory (`.env`)
+  - `%LOCALAPPDATA%\StrudelVoice\.env`
+  - project `code/python/.env` (dev mode)
 
 ## Asset packaging
 - `build_exe.ps1` auto-includes these directories when present:

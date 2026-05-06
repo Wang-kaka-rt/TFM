@@ -20,13 +20,6 @@ export class StrudelService {
     });
   }
 
-  reload(payload: SessionPayload): Promise<BackendResponse> {
-    return this.request<BackendResponse>("/reload", {
-      method: "POST",
-      body: JSON.stringify({ session_id: payload.sessionId }),
-    });
-  }
-
   stop(payload: SessionPayload): Promise<BackendResponse> {
     return this.request<BackendResponse>("/stop", {
       method: "POST",

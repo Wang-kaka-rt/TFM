@@ -3,7 +3,8 @@ param(
   [string]$Name = "strudel-voice",
   [switch]$IncludeHeavyAsr,
   [string]$StrudelDist = "..\strudel-src-real\website\dist",
-  [switch]$SkipSyncStrudel
+  [switch]$SkipSyncStrudel,
+  [string]$PythonExe = ""
 )
 
 Set-StrictMode -Version Latest
@@ -23,6 +24,52 @@ try {
     if ($LASTEXITCODE -ne 0) {
       throw "Native command failed with exit code $LASTEXITCODE."
     }
+  }
+
+  function Resolve-PythonCommand {
+    if ($PythonExe) {
+      if (-not (Test-Path $PythonExe)) {
+        throw "PythonExe not found: $PythonExe"
+      }
+      return @($PythonExe)
+    }
+
+    $candidates = @(
+      "C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe",
+      "python",
+      "py"
+    )
+    foreach ($candidate in $candidates) {
+      try {
+        if ($candidate -eq "py") {
+          & py -3.12 -c "import sys; print(sys.version)" | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            return @("py", "-3.12")
+          }
+        } else {
+          & $candidate -c "import sys; print(sys.version)" | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            return @($candidate)
+          }
+        }
+      } catch {
+        continue
+      }
+    }
+    throw "No usable Python interpreter found. Pass -PythonExe <path-to-python.exe>."
+  }
+
+  $pythonCommand = @(Resolve-PythonCommand)
+  function Invoke-PythonModule {
+    param(
+      [Parameter(Mandatory = $true)]
+      [string[]]$Arguments
+    )
+    $pythonArgs = @()
+    if ($pythonCommand.Length -gt 1) {
+      $pythonArgs = $pythonCommand[1..($pythonCommand.Length - 1)]
+    }
+    Invoke-CheckedNative { & $pythonCommand[0] @pythonArgs @Arguments }
   }
 
   if (-not (Test-Path "requirements.txt")) {
@@ -58,10 +105,14 @@ try {
   }
 
   Write-Host "[1/3] Installing runtime dependencies..."
-  Invoke-CheckedNative { py -m pip install -r requirements.txt }
+  if ($IncludeHeavyAsr) {
+    Invoke-PythonModule -Arguments @("-m", "pip", "install", "-r", "requirements.realtime.txt")
+  } else {
+    Invoke-PythonModule -Arguments @("-m", "pip", "install", "-r", "requirements.txt")
+  }
 
   Write-Host "[2/3] Installing packaging dependencies..."
-  Invoke-CheckedNative { py -m pip install -r packaging/requirements-packaging.txt }
+  Invoke-PythonModule -Arguments @("-m", "pip", "install", "-r", "packaging/requirements-packaging.txt")
 
   Write-Host "[3/3] Building EXE with PyInstaller..."
   $pyiArgs = @(
@@ -79,6 +130,14 @@ try {
     "--hidden-import", "webview",
     "--hidden-import", "app.main",
     "--hidden-import", "app.api.routes",
+    "--hidden-import", "faster_whisper",
+    "--hidden-import", "ctranslate2",
+    "--hidden-import", "tokenizers",
+    "--hidden-import", "huggingface_hub",
+    "--hidden-import", "av",
+    "--collect-all", "faster_whisper",
+    "--collect-all", "ctranslate2",
+    "--collect-all", "tokenizers",
     $Entry
   )
 
@@ -87,7 +146,20 @@ try {
     $pyiArgs += @(
       "--exclude-module", "torch",
       "--exclude-module", "whisperx",
-      "--exclude-module", "faster_whisper"
+      "--exclude-module", "tensorflow",
+      "--exclude-module", "keras",
+      "--exclude-module", "tf_keras",
+      "--exclude-module", "pandas",
+      "--exclude-module", "pyarrow",
+      "--exclude-module", "scipy",
+      "--exclude-module", "sklearn",
+      "--exclude-module", "cv2",
+      "--exclude-module", "numba",
+      "--exclude-module", "llvmlite",
+      "--exclude-module", "matplotlib",
+      "--exclude-module", "IPython",
+      "--exclude-module", "jupyter_client",
+      "--exclude-module", "pytest"
     )
   }
 
@@ -104,7 +176,7 @@ try {
     }
   }
 
-  Invoke-CheckedNative { py -m PyInstaller @pyiArgs }
+  Invoke-PythonModule -Arguments (@("-m", "PyInstaller") + $pyiArgs)
 
   Write-Host "Build finished. Check dist/$Name.exe"
 }

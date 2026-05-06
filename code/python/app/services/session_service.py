@@ -69,10 +69,12 @@ class ChunkRecord:
 class SessionRuntime:
     session_id: str
     workspace_dir: Path
+    processing_dir: Path
     raw_dir: Path
     words_dir: Path
     phrases_dir: Path
     sentences_dir: Path
+    letters_dir: Path
     metadata_path: Path
     samples_path: Path
     strudel_script_path: Path
@@ -109,6 +111,9 @@ class SessionService:
                 faster_whisper_device=settings.faster_whisper_device,
                 faster_whisper_compute_type=settings.faster_whisper_compute_type,
                 faster_whisper_beam_size=settings.faster_whisper_beam_size,
+                transcriber_language=settings.transcriber_language,
+                transcriber_initial_prompt=settings.transcriber_initial_prompt,
+                transcriber_hotwords=settings.transcriber_hotwords,
             )
         except Exception as exc:
             logger.warning(
@@ -116,6 +121,7 @@ class SessionService:
                 settings.transcriber_backend,
                 exc,
             )
+            self._transcriber_init_error = str(exc)
             self._transcriber = create_transcriber(
                 "mock",
                 settings.mock_transcript_words,
@@ -123,8 +129,13 @@ class SessionService:
                 faster_whisper_device=settings.faster_whisper_device,
                 faster_whisper_compute_type=settings.faster_whisper_compute_type,
                 faster_whisper_beam_size=settings.faster_whisper_beam_size,
+                transcriber_language=settings.transcriber_language,
+                transcriber_initial_prompt=settings.transcriber_initial_prompt,
+                transcriber_hotwords=settings.transcriber_hotwords,
             )
             self._effective_transcriber_backend = "mock"
+        else:
+            self._transcriber_init_error = None
 
         self._vad: BaseVoiceActivityDetector = create_vad(
             settings.vad_backend,
@@ -144,10 +155,25 @@ class SessionService:
         self._chunk_processing_latencies: list[float] = []
         self._slice_export_attempts = 0
         self._slice_export_failures = 0
-        self._settings.samples_root.mkdir(parents=True, exist_ok=True)
+        try:
+            self._settings.samples_root.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            fallback_root = Path.home() / "Documents" / "StrudelVoice" / "samples"
+            logger.warning(
+                "Samples root '%s' is not writable; fallback to '%s'.",
+                self._settings.samples_root,
+                fallback_root,
+            )
+            fallback_root.mkdir(parents=True, exist_ok=True)
+            self._settings.samples_root = fallback_root
 
     async def start(self, session_id: str) -> SessionInfo:
         async with self._lock:
+            if self._settings.transcriber_backend != "mock" and self._effective_transcriber_backend == "mock":
+                raise RuntimeError(
+                    "Real speech recognition is unavailable; "
+                    f"failed to initialize '{self._settings.transcriber_backend}': {self._transcriber_init_error}"
+                )
             existing = self._runtimes.get(session_id)
             if existing is not None and existing.task is not None and not existing.task.done():
                 return self._manager.require(session_id)
@@ -164,6 +190,7 @@ class SessionService:
                     "words_dir": str(runtime.words_dir),
                     "phrases_dir": str(runtime.phrases_dir),
                     "sentences_dir": str(runtime.sentences_dir),
+                    "letters_dir": str(runtime.letters_dir),
                     "metadata_path": str(runtime.metadata_path),
                     "samples_path": str(runtime.samples_path),
                     "strudel_script_path": str(runtime.strudel_script_path),
@@ -186,20 +213,6 @@ class SessionService:
             await asyncio.to_thread(self._refine_runtime_words, runtime)
         self._write_artifacts(runtime)
         return self._manager.stop(session_id)
-
-    async def reload(self, session_id: str) -> SessionInfo:
-        runtime = self._require_runtime(session_id)
-        if runtime.task is not None and not runtime.task.done():
-            runtime.stop_event.set()
-            try:
-                await runtime.task
-            except asyncio.CancelledError:
-                logger.warning("Session task was cancelled before reload: %s", session_id)
-        self._manager.set_processing(session_id, event="rebuilding-artifacts")
-        if self._settings.enable_refinement:
-            await asyncio.to_thread(self._refine_runtime_words, runtime)
-        self._write_artifacts(runtime)
-        return self._manager.reload(session_id)
 
     def get(self, session_id: str) -> SessionInfo | None:
         return self._manager.get(session_id)
@@ -292,13 +305,16 @@ class SessionService:
 
     def _build_runtime(self, session_id: str) -> SessionRuntime:
         workspace_dir = self._settings.samples_root / session_id
+        processing_dir = self._settings.samples_root / ".internal" / session_id
         return SessionRuntime(
             session_id=session_id,
             workspace_dir=workspace_dir,
-            raw_dir=workspace_dir / "raw",
+            processing_dir=processing_dir,
+            raw_dir=processing_dir / "raw",
             words_dir=workspace_dir / "words",
             phrases_dir=workspace_dir / "phrases",
             sentences_dir=workspace_dir / "sentences",
+            letters_dir=workspace_dir / "letters",
             metadata_path=workspace_dir / "metadata.json",
             samples_path=workspace_dir / "samples.json",
             strudel_script_path=workspace_dir / "strudel.js",
@@ -307,10 +323,13 @@ class SessionService:
     def _reset_workspace(self, runtime: SessionRuntime) -> None:
         if runtime.workspace_dir.exists():
             shutil.rmtree(runtime.workspace_dir, ignore_errors=True)
+        if runtime.processing_dir.exists():
+            shutil.rmtree(runtime.processing_dir, ignore_errors=True)
         runtime.raw_dir.mkdir(parents=True, exist_ok=True)
         runtime.words_dir.mkdir(parents=True, exist_ok=True)
         runtime.phrases_dir.mkdir(parents=True, exist_ok=True)
         runtime.sentences_dir.mkdir(parents=True, exist_ok=True)
+        runtime.letters_dir.mkdir(parents=True, exist_ok=True)
         runtime.chunks.clear()
         runtime.stop_event = asyncio.Event()
         runtime.task = None
@@ -327,6 +346,7 @@ class SessionService:
         word_samples = self._collect_word_samples(runtime)
         phrase_samples = self._collect_phrase_samples(runtime)
         sentence_samples = self._collect_sentence_samples(runtime)
+        letter_samples = self._collect_letter_samples(runtime)
 
         metadata = {
             "session_id": runtime.session_id,
@@ -369,6 +389,7 @@ class SessionService:
             "words": word_samples,
             "phrases": phrase_samples,
             "sentences": sentence_samples,
+            "letters": letter_samples,
         }
         runtime.samples_path.write_text(
             json.dumps(samples, ensure_ascii=False, indent=2),
@@ -381,6 +402,7 @@ class SessionService:
             word_samples=word_samples,
             phrase_samples=phrase_samples,
             sentence_samples=sentence_samples,
+            letter_samples=letter_samples,
         )
         runtime.strudel_script_path.write_text(script, encoding="utf-8")
 
@@ -390,6 +412,7 @@ class SessionService:
             word_count=len(word_samples),
             phrase_count=len(phrase_samples),
             sentence_count=len(sentence_samples),
+            letter_count=len(letter_samples),
         )
 
     def _collect_word_samples(self, runtime: SessionRuntime) -> list[dict[str, object]]:
@@ -469,6 +492,40 @@ class SessionService:
             )
         return items
 
+    def _collect_letter_samples(self, runtime: SessionRuntime) -> list[dict[str, object]]:
+        items: list[dict[str, object]] = []
+        letter_index = 0
+        for chunk in runtime.chunks:
+            for word_index, word in enumerate(chunk.words, start=1):
+                characters = [char for char in word.word if char.strip()]
+                if not characters:
+                    continue
+                word_duration = max(0.01, word.end - word.start)
+                step = word_duration / len(characters)
+                for char_offset, char in enumerate(characters, start=1):
+                    letter_index += 1
+                    start = round(word.start + (char_offset - 1) * step, 3)
+                    end = round(max(start + 0.01, word.start + char_offset * step), 3)
+                    safe_char = "".join(c for c in char.lower() if c.isalnum() or c in ("-", "_")) or "x"
+                    file_name = (
+                        f"letter_{chunk.index:04d}_{word_index:02d}_{char_offset:02d}_{safe_char}.wav"
+                    )
+                    export_wav_slice(chunk.audio_path, runtime.letters_dir / file_name, start, end)
+                    items.append(
+                        {
+                            "name": f"{char}_{letter_index:04d}",
+                            "text": char,
+                            "level": "letter",
+                            "chunk_index": chunk.index,
+                            "start": start,
+                            "end": end,
+                            "duration_seconds": round(end - start, 3),
+                            "path": f"letters/{file_name}",
+                            "url": f"{self._settings.strudel_base_url}/samples/{runtime.session_id}/letters/{file_name}",
+                        }
+                    )
+        return items
+
     def _require_runtime(self, session_id: str) -> SessionRuntime:
         runtime = self._runtimes.get(session_id)
         if runtime is None:
@@ -527,6 +584,7 @@ def build_strudel_script(
     word_samples: list[dict[str, object]],
     phrase_samples: list[dict[str, object]],
     sentence_samples: list[dict[str, object]],
+    letter_samples: list[dict[str, object]],
 ) -> str:
     payload = {
         "sessionId": session_id,
@@ -534,6 +592,7 @@ def build_strudel_script(
             "words": word_samples,
             "phrases": phrase_samples,
             "sentences": sentence_samples,
+            "letters": letter_samples,
         },
     }
     data = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -543,14 +602,6 @@ def build_strudel_script(
         f"export const strudelVoiceSamples = STRUDEL_VOICE.samples;\n"
         f"export async function start(sessionId) {{\n"
         f"  const response = await fetch('{base_url}/start', {{\n"
-        f"    method: 'POST',\n"
-        f"    headers: {{ 'Content-Type': 'application/json' }},\n"
-        f"    body: JSON.stringify({{ session_id: sessionId }}),\n"
-        f"  }});\n"
-        f"  return response.json();\n"
-        f"}}\n"
-        f"export async function reload(sessionId) {{\n"
-        f"  const response = await fetch('{base_url}/reload', {{\n"
         f"    method: 'POST',\n"
         f"    headers: {{ 'Content-Type': 'application/json' }},\n"
         f"    body: JSON.stringify({{ session_id: sessionId }}),\n"

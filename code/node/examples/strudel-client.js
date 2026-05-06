@@ -20,10 +20,6 @@ export async function start(sessionId) {
   return call("/strudel/start", { sessionId });
 }
 
-export async function reload(sessionId) {
-  return call("/strudel/reload", { sessionId });
-}
-
 export async function stop(sessionId) {
   return call("/strudel/stop", { sessionId });
 }

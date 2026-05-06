@@ -40,15 +40,6 @@ class StopSessionRequest(BaseModel):
         return StartSessionRequest.validate_session_id(value)
 
 
-class ReloadSessionRequest(BaseModel):
-    session_id: str = Field(..., min_length=1, max_length=64)
-
-    @field_validator("session_id")
-    @classmethod
-    def validate_session_id(cls, value: str) -> str:
-        return StartSessionRequest.validate_session_id(value)
-
-
 class SessionInfo(BaseModel):
     session_id: str
     state: SessionState
@@ -60,10 +51,12 @@ class SessionInfo(BaseModel):
     words_dir: str | None = None
     phrases_dir: str | None = None
     sentences_dir: str | None = None
+    letters_dir: str | None = None
     chunk_count: int = 0
     word_count: int = 0
     phrase_count: int = 0
     sentence_count: int = 0
+    letter_count: int = 0
     metadata_path: str | None = None
     samples_path: str | None = None
     strudel_script_path: str | None = None

@@ -1,51 +1,47 @@
-# Real Mode Switch Guide
+# Real Mode Guide
 
-## 0) Audio stack: FFmpeg + pydub
-- Install dependency:
-  - `py -m pip install pydub`
-- Install FFmpeg and ensure `ffmpeg` is in PATH, or place binaries under `assets/ffmpeg` for EXE packaging.
+Real mode uses the microphone, faster-whisper, and optional Silero VAD. Start with mock mode for acceptance tests, then switch one real backend on at a time.
 
-## 1) Recorder: microphone
-- Install dependency:
-  - `py -m pip install sounddevice`
-- Update `.env`:
-  - `STRUDEL_RECORDER_BACKEND=microphone`
-  - Optional (pick input device index):
-    - `STRUDEL_MICROPHONE_DEVICE=1`
+## 1. Install dependencies
 
-## 2) ASR: faster-whisper
-- Install dependency:
-  - `py -m pip install faster-whisper`
-- Update `.env`:
-  - `STRUDEL_TRANSCRIBER_BACKEND=faster-whisper`
-  - `STRUDEL_FASTER_WHISPER_MODEL=small`
-  - `STRUDEL_FASTER_WHISPER_DEVICE=auto`
-  - `STRUDEL_FASTER_WHISPER_COMPUTE_TYPE=int8`
-  - `STRUDEL_FASTER_WHISPER_BEAM_SIZE=1`
-
-## 3) VAD: silero
-- Install dependency:
-  - `py -m pip install silero-vad torch`
-- Update `.env`:
-  - `STRUDEL_ENABLE_VAD=true`
-  - `STRUDEL_VAD_BACKEND=silero`
-  - `STRUDEL_SILERO_SAMPLE_RATE=16000`
-  - `STRUDEL_SILERO_SPEECH_THRESHOLD=0.5`
-
-## 4) Refinement: whisperx
-- Install dependency:
-  - `py -m pip install whisperx`
-- Update `.env`:
-  - `STRUDEL_ENABLE_REFINEMENT=true`
-  - `STRUDEL_REFINEMENT_BACKEND=whisperx`
-  - `STRUDEL_WHISPERX_MODEL=small`
-  - `STRUDEL_WHISPERX_DEVICE=cpu`
-  - `STRUDEL_WHISPERX_COMPUTE_TYPE=int8`
-
-## 5) Verify flow
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8787/start" -Method POST -ContentType "application/json" -Body '{"session_id":"real01"}'
-Start-Sleep -Seconds 3
-Invoke-RestMethod -Uri "http://127.0.0.1:8787/reload" -Method POST -ContentType "application/json" -Body '{"session_id":"real01"}'
-Invoke-RestMethod -Uri "http://127.0.0.1:8787/stop" -Method POST -ContentType "application/json" -Body '{"session_id":"real01"}'
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pip install -r requirements.realtime.txt
 ```
+
+FFmpeg is recommended for reliable audio slicing. Put `ffmpeg.exe` in `PATH` or package it under `assets\ffmpeg`.
+
+## 2. Configure `.env`
+
+```text
+STRUDEL_RECORDER_BACKEND=microphone
+STRUDEL_TRANSCRIBER_BACKEND=faster-whisper
+STRUDEL_VAD_BACKEND=silero
+STRUDEL_ENABLE_VAD=true
+STRUDEL_ENABLE_REFINEMENT=false
+```
+
+If the wrong input device is selected, set:
+
+```text
+STRUDEL_MICROPHONE_DEVICE=0
+```
+
+Change `0` to the device index you want.
+
+## 3. Run backend
+
+```powershell
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
+```
+
+## 4. Manual verification
+
+```powershell
+$body = @{ session_id = "real01" } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://127.0.0.1:8787/start" -Method POST -ContentType "application/json" -Body $body
+Start-Sleep -Seconds 5
+Invoke-RestMethod -Uri "http://127.0.0.1:8787/stop" -Method POST -ContentType "application/json" -Body $body
+Invoke-RestMethod -Uri "http://127.0.0.1:8787/status?session_id=real01" -Method GET
+```
+
+If `/start` fails, the API now returns the failing operation in the response body. Also check `last_error` from `/status`.

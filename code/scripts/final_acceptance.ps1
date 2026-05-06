@@ -16,13 +16,10 @@ Invoke-RestMethod -Uri "$PythonBase/start" -Method POST -ContentType "applicatio
 
 Start-Sleep -Seconds 2
 
-Write-Host "[3/7] Reload"
-Invoke-RestMethod -Uri "$PythonBase/reload" -Method POST -ContentType "application/json" -Body $body | Out-Null
-
-Write-Host "[4/7] Stop"
+Write-Host "[3/7] Stop"
 Invoke-RestMethod -Uri "$PythonBase/stop" -Method POST -ContentType "application/json" -Body $body | Out-Null
 
-Write-Host "[5/7] Validate artifacts"
+Write-Host "[4/7] Validate artifacts"
 $manifest = Invoke-RestMethod -Uri "$PythonBase/samples/$SessionId/manifest" -Method GET
 $metadata = Invoke-RestMethod -Uri "$PythonBase/metadata/$SessionId" -Method GET
 $script = Invoke-WebRequest -Uri "$PythonBase/strudel/$SessionId" -Method GET -UseBasicParsing
@@ -30,11 +27,11 @@ if (-not $manifest.words) { throw "Manifest words is empty." }
 if (-not $metadata.chunks) { throw "Metadata chunks is empty." }
 if ($script.Content -notmatch "strudelVoiceSamples") { throw "strudel.js content invalid." }
 
-Write-Host "[6/7] Validate metrics"
+Write-Host "[5/7] Validate metrics"
 $metrics = Invoke-RestMethod -Uri "$PythonBase/metrics" -Method GET
 if ($metrics.total_chunks -lt 1) { throw "Metrics total_chunks is invalid." }
 
-Write-Host "[7/7] Optional Node bridge checks"
+Write-Host "[6/7] Optional Node bridge checks"
 try {
   Invoke-RestMethod -Uri "$NodeBase/strudel/metrics" -Method GET | Out-Null
   Invoke-RestMethod -Uri "$NodeBase/strudel/status?sessionId=$SessionId" -Method GET | Out-Null

@@ -1,9 +1,37 @@
+import sys
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PYTHON_SERVICE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_env_files() -> tuple[str, ...]:
+    # pydantic-settings gives later env files higher priority. Keep the
+    # machine-wide desktop config as a fallback, and let repo-local config win
+    # during development.
+    candidates: list[Path] = [
+        Path.home() / "AppData" / "Local" / "StrudelVoice" / ".env",
+        PYTHON_SERVICE_ROOT / ".env",
+        Path.cwd() / ".env",
+    ]
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / ".env")
+
+    unique_files: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        resolved = str(candidate.resolve())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_files.append(resolved)
+    return tuple(unique_files)
+
+
+ENV_FILES = resolve_env_files()
 
 
 class Settings(BaseSettings):
@@ -32,7 +60,13 @@ class Settings(BaseSettings):
     faster_whisper_model: str = "base"
     faster_whisper_device: str = "auto"
     faster_whisper_compute_type: str = "int8"
-    faster_whisper_beam_size: int = 1
+    faster_whisper_beam_size: int = 5
+    transcriber_language: str | None = "es"
+    transcriber_initial_prompt: str = (
+        "Vocabulario en español para nombres de sonidos: hola, bien, bueno, consejo, familia, "
+        "hijos, problema, también, tengo, todos, ritmo, voz, muestra, frase, pulso, eco."
+    )
+    transcriber_hotwords: str = "hola bien bueno consejo familia hijos problema también tengo todos"
     vad_backend: str = "mock"
     enable_vad: bool = True
     min_word_duration_seconds: float = 0.04
@@ -46,20 +80,26 @@ class Settings(BaseSettings):
     whisperx_compute_type: str = "int8"
     mock_transcript_words: list[str] = Field(
         default_factory=lambda: [
-            "strudel",
-            "voice",
-            "sample",
-            "loop",
-            "phrase",
-            "pulse",
-            "echo",
-            "groove",
+            "hola",
+            "ritmo",
+            "voz",
+            "muestra",
+            "frase",
+            "pulso",
+            "eco",
+            "grave",
         ]
     )
 
+    @model_validator(mode="after")
+    def resolve_paths(self) -> "Settings":
+        if not self.samples_root.is_absolute():
+            self.samples_root = (PYTHON_SERVICE_ROOT / self.samples_root).resolve()
+        return self
+
     model_config = SettingsConfigDict(
         env_prefix="STRUDEL_",
-        env_file=".env",
+        env_file=ENV_FILES,
         env_file_encoding="utf-8",
     )
 

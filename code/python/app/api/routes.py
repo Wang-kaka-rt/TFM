@@ -1,13 +1,14 @@
+import logging
+import os
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Path as ApiPath, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.core.config import settings
 from app.models.session import (
     ApiMessage,
-    ReloadSessionRequest,
     SessionResponse,
     StartSessionRequest,
     StatusResponse,
@@ -17,6 +18,7 @@ from app.services.errors import SessionNotFoundError
 from app.services.session_service import SessionService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 session_service = SessionService(settings)
 STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 STRUDEL_DIR = STATIC_DIR / "strudel"
@@ -45,9 +47,56 @@ async def healthcheck() -> ApiMessage:
     return ApiMessage(message="backend is healthy")
 
 
+@router.get("/storage", tags=["system"])
+async def storage_info(
+    session_id: str | None = Query(default=None, description="Optional session id for resolved storage paths"),
+) -> dict[str, str | None]:
+    root = session_service._settings.samples_root.resolve()
+    normalized = session_id.strip() if session_id else ""
+    if normalized:
+        workspace_dir = (root / normalized).resolve()
+        raw_dir = (root / ".internal" / normalized / "raw").resolve()
+    else:
+        workspace_dir = None
+        raw_dir = None
+    return {
+        "samples_root": str(root),
+        "session_id": normalized or None,
+        "workspace_dir": None if workspace_dir is None else str(workspace_dir),
+        "raw_dir": None if raw_dir is None else str(raw_dir),
+    }
+
+
+@router.post("/storage/open", response_model=ApiMessage, tags=["system"])
+async def open_storage_path(
+    session_id: str | None = Query(default=None, description="Optional session id for resolved storage paths"),
+) -> ApiMessage:
+    root = session_service._settings.samples_root.resolve()
+    normalized = session_id.strip() if session_id else ""
+    target = (root / normalized).resolve() if normalized else root
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid storage path") from exc
+    if normalized and not target.exists():
+        target.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        root.mkdir(parents=True, exist_ok=True)
+        target = root
+    os.startfile(target)  # type: ignore[attr-defined]
+    return ApiMessage(message=f"opened storage path: {target}")
+
+
 @router.post("/start", response_model=SessionResponse, tags=["session"])
 async def start_session(payload: StartSessionRequest) -> SessionResponse:
-    session = await session_service.start(payload.session_id)
+    try:
+        session = await session_service.start(payload.session_id)
+    except Exception as exc:
+        logger.exception("Failed to start session '%s'", payload.session_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"failed to start session '{payload.session_id}': {exc}",
+        ) from exc
     return SessionResponse(message="session started", session=session)
 
 
@@ -58,15 +107,6 @@ async def stop_session(payload: StopSessionRequest) -> SessionResponse:
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"session '{payload.session_id}' not found") from exc
     return SessionResponse(message="session stopped", session=session)
-
-
-@router.post("/reload", response_model=SessionResponse, tags=["session"])
-async def reload_session(payload: ReloadSessionRequest) -> SessionResponse:
-    try:
-        session = await session_service.reload(payload.session_id)
-    except SessionNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"session '{payload.session_id}' not found") from exc
-    return SessionResponse(message="session reloaded", session=session)
 
 
 @router.get("/status", response_model=StatusResponse, tags=["session"])
@@ -110,6 +150,23 @@ async def get_samples_manifest(session_id: str) -> FileResponse:
     if not manifest_path.exists():
         raise HTTPException(status_code=404, detail=f"samples manifest for '{session_id}' not found")
     return FileResponse(manifest_path, media_type="application/json", filename="samples.json")
+
+
+@router.get("/samples/{session_id}/{sample_group}/{file_name}", tags=["artifacts"])
+async def get_sample_file(
+    session_id: str,
+    sample_group: str = ApiPath(pattern="^(sentences|phrases|words|letters)$"),
+    file_name: str = ApiPath(pattern=r"^[\w.-]+\.wav$"),
+) -> FileResponse:
+    root = session_service._settings.samples_root.resolve()
+    sample_path = (root / session_id / sample_group / file_name).resolve()
+    try:
+        sample_path.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="sample not found") from exc
+    if not sample_path.is_file():
+        raise HTTPException(status_code=404, detail="sample not found")
+    return FileResponse(sample_path, media_type="audio/wav", filename=file_name)
 
 
 @router.get("/metadata/{session_id}", tags=["artifacts"])

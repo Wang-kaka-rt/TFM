@@ -3,6 +3,40 @@ import json
 
 from app.core.config import Settings
 from app.services.session_service import SessionService
+from app.services.transcriber import MockTranscriber, clean_token
+
+
+def test_relative_samples_root_resolves_from_python_service_dir():
+    settings = Settings(samples_root="../../samples")
+
+    assert settings.samples_root.is_absolute()
+    assert settings.samples_root.name == "samples"
+    assert settings.samples_root.parent.name == "TFM"
+
+
+def test_spanish_tokens_are_used_for_mock_and_cleaning(tmp_path):
+    audio_path = tmp_path / "spanish.wav"
+    service = SessionService(
+        Settings(
+            samples_root=tmp_path / "samples",
+            recorder_backend="mock",
+            transcriber_backend="mock",
+        )
+    )
+    service._recorder.record_chunk(
+        audio_path,
+        duration_seconds=0.05,
+        sample_rate=16_000,
+        channels=1,
+        chunk_index=1,
+    )
+
+    words = MockTranscriber(["hola", "niño", "canción"]).transcribe(audio_path, chunk_index=0)
+
+    assert [word.word for word in words] == ["hola", "niño", "canción"]
+    assert clean_token(" ¡Hola, canción! ") == "hola_canción"
+    assert clean_token("ula") == "hola"
+    assert clean_token("ola") == "hola"
 
 
 def test_session_service_generates_artifacts(tmp_path):
@@ -26,6 +60,7 @@ def test_session_service_generates_artifacts(tmp_path):
     assert session.state.value == "stopped"
     assert session.chunk_count == 2
     assert session.word_count >= 2
+    assert session.letter_count >= session.word_count
     assert session.metadata_path is not None
     assert session.samples_path is not None
     assert session.strudel_script_path is not None
@@ -46,6 +81,7 @@ def test_session_service_generates_artifacts(tmp_path):
     assert "raw_word_count" in metadata["chunks"][0]
     assert "exported_word_count" in metadata["chunks"][0]
     assert len(samples["words"]) == session.word_count
+    assert len(samples["letters"]) == session.letter_count
     assert samples["session_id"] == "test01"
     metrics = service.get_metrics()
     assert "avg_chunk_latency_ms" in metrics

@@ -1,61 +1,53 @@
-# 依赖安装、启动与构建命令
+# Strudel Voice
 
-## 1) Node 桥接服务（NestJS）
+Strudel Voice is a local prototype for recording voice, slicing recognized words or phrases into samples, and importing the generated sample manifest into Strudel.
 
-### 安装依赖
-```bash
-cd code/node
-npm install
+## Project layout
+
+- `code/python`: FastAPI backend. It records audio, transcribes chunks, exports samples, writes metadata, and serves the bundled Strudel static site.
+- `code/node`: NestJS bridge. It forwards Strudel control requests to the Python backend.
+- `code/strudel-src-real`: upstream Strudel source used to build static assets.
+- `samples`: generated session artifacts.
+
+## Quick check
+
+Use the Python 3.12 interpreter that has the project dependencies installed:
+
+```powershell
+cd code\python
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m pytest -q
 ```
 
-### 启动（开发）
-```bash
-cd code/node
-npm run start:dev
-```
+Build the Node bridge:
 
-### 构建
-```bash
-cd code/node
+```powershell
+cd code\node
 npm run build
 ```
 
-## 2) Python 后端服务
+## Run in development
 
-### 安装依赖
-```bash
-cd code/python
-py -m pip install -r requirements.txt
+Python backend:
+
+```powershell
+cd code\python
+C:\Users\admin\AppData\Local\Programs\Python\Python312\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
 ```
 
-### 启动（开发）
-```bash
-cd code/python
-py -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
+Node bridge:
+
+```powershell
+cd code\node
+npm run start
 ```
 
-### 构建（打包 EXE）
-```bash
-cd code/python
-powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1
+## Acceptance test
+
+With both services running:
+
+```powershell
+cd code\scripts
+powershell -ExecutionPolicy Bypass -File .\final_acceptance.ps1 -SessionId final01
 ```
 
-## 3) Strudel 前端（可选）
-
-### 安装依赖
-```bash
-cd code/strudel-src-real
-pnpm i
-```
-
-### 启动（开发）
-```bash
-cd code/strudel-src-real
-npm run dev
-```
-
-### 构建
-```bash
-cd code/strudel-src-real
-npm run build
-```
+For reliable local validation, use `mock` backends first. Real microphone and ASR mode depends on local audio devices and model dependencies.

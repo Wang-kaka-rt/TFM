@@ -31,11 +31,6 @@ export class AppController {
     return this.strudelService.start(payload);
   }
 
-  @Post("strudel/reload")
-  reload(@Body() payload: SessionPayload): Promise<BackendResponse> {
-    return this.strudelService.reload(payload);
-  }
-
   @Post("strudel/stop")
   stop(@Body() payload: SessionPayload): Promise<BackendResponse> {
     return this.strudelService.stop(payload);

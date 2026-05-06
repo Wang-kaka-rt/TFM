@@ -50,3 +50,6 @@ code/python/assets/models/
 
 # Synced/generated Strudel site assets
 code/python/static/strudel/
+
+# Backup of flattened embedded repositories
+.nested-git-backups/

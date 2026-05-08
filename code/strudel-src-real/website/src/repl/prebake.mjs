@@ -156,6 +156,9 @@ export async function prebake() {
   ]);
 
   aliasBank(`${baseCDN}/tidal-drum-machines-alias.json`);
+
+  // Expose samples() for the voice control panel to register recordings directly.
+  window.strudelSamples = samples;
 }
 
 const maxPan = noteToMidi('C8');

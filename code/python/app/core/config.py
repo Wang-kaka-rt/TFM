@@ -8,12 +8,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 PYTHON_SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _platform_config_dir() -> Path:
+    if sys.platform == "win32":
+        return Path.home() / "AppData" / "Local" / "StrudelVoice"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "StrudelVoice"
+    return Path.home() / ".config" / "strudel-voice"
+
+
 def resolve_env_files() -> tuple[str, ...]:
     # pydantic-settings gives later env files higher priority. Keep the
     # machine-wide desktop config as a fallback, and let repo-local config win
     # during development.
     candidates: list[Path] = [
-        Path.home() / "AppData" / "Local" / "StrudelVoice" / ".env",
+        _platform_config_dir() / ".env",
         PYTHON_SERVICE_ROOT / ".env",
         Path.cwd() / ".env",
     ]

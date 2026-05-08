@@ -1,5 +1,7 @@
 import logging
 import os
+import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
@@ -15,6 +17,7 @@ from app.models.session import (
     StopSessionRequest,
 )
 from app.services.errors import SessionNotFoundError
+from app.services.panel import control_panel_script
 from app.services.session_service import SessionService
 
 router = APIRouter()
@@ -83,7 +86,12 @@ async def open_storage_path(
     if not target.exists():
         root.mkdir(parents=True, exist_ok=True)
         target = root
-    os.startfile(target)  # type: ignore[attr-defined]
+    if sys.platform == "win32":
+        os.startfile(target)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.run(["open", str(target)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(target)], check=False)
     return ApiMessage(message=f"opened storage path: {target}")
 
 
@@ -213,11 +221,19 @@ def _resolve_strudel_asset(asset_path: str) -> Path | None:
 
 
 @router.get("/index.html", include_in_schema=False)
-async def strudel_index() -> Response:
+async def strudel_index(request: Request) -> Response:
     index_file = _resolve_strudel_asset("index.html")
     if index_file is None:
         raise HTTPException(status_code=404, detail="strudel index not found")
-    return FileResponse(index_file, media_type="text/html")
+    session_id = request.query_params.get("svSession", "demo01")
+    html = index_file.read_text(encoding="utf-8")
+    panel_js = control_panel_script(session_id)
+    injection = f"\n<script>\n{panel_js}\n</script>"
+    if "</body>" in html:
+        html = html.replace("</body>", f"{injection}\n</body>", 1)
+    else:
+        html += injection
+    return HTMLResponse(html, media_type="text/html")
 
 
 @router.get("/{asset_path:path}", include_in_schema=False)

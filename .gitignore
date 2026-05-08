@@ -53,3 +53,7 @@ code/python/static/strudel/
 
 # Backup of flattened embedded repositories
 .nested-git-backups/
+
+# Local Claude worktrees and stale embedded repo paths
+.claude/worktrees/
+code/strudel-src/

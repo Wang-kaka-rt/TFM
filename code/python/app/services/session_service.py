@@ -260,8 +260,13 @@ class SessionService:
 
     async def _record_session(self, runtime: SessionRuntime) -> None:
         try:
-            for chunk_index in range(1, self._settings.max_chunks_per_session + 1):
-                if runtime.stop_event.is_set():
+            # max_chunks_per_session <= 0 means "unbounded": the session keeps
+            # recording fixed-duration chunks until the client calls /stop.
+            max_chunks = self._settings.max_chunks_per_session
+            chunk_index = 0
+            while not runtime.stop_event.is_set():
+                chunk_index += 1
+                if max_chunks > 0 and chunk_index > max_chunks:
                     break
 
                 start_time = time.perf_counter()

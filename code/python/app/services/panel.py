@@ -18,7 +18,51 @@ def control_panel_script(default_session_id: str) -> str:
   const state = {{
     sessionId: params.get("svSession") || {default_session_id!r},
     baseUrl: (params.get("svBase") || window.location.origin).replace(/\\/$/, ""),
+    busy: false,
+    isRecording: false,
+    isProcessing: false,
+    visualizer: null,
+    recordingStartedAt: 0,
+    recordingTimerId: 0,
+    previewPollId: 0,
+    previewWords: [],
   }};
+
+  const styleTag = document.createElement("style");
+  styleTag.textContent = `
+    @keyframes strudelVoicePanelPulse {{
+      0% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }}
+      70% {{ transform: scale(1.08); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }}
+      100% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }}
+    }}
+    @keyframes strudelVoicePanelSpin {{
+      0% {{ transform: rotate(0deg); }}
+      100% {{ transform: rotate(360deg); }}
+    }}
+    .strudel-voice-scroll {{
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148, 163, 184, 0.75) transparent;
+    }}
+    .strudel-voice-scroll::-webkit-scrollbar {{
+      width: 8px;
+    }}
+    .strudel-voice-scroll::-webkit-scrollbar-track {{
+      background: transparent;
+    }}
+    .strudel-voice-scroll::-webkit-scrollbar-thumb {{
+      background: linear-gradient(180deg, rgba(191, 219, 254, 0.95), rgba(148, 163, 184, 0.9));
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }}
+    .strudel-voice-scroll::-webkit-scrollbar-thumb:hover {{
+      background: linear-gradient(180deg, rgba(96, 165, 250, 0.95), rgba(100, 116, 139, 0.95));
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }}
+  `;
+  document.head.appendChild(styleTag);
 
   const openButton = document.createElement("button");
   openButton.textContent = "Voice";
@@ -34,6 +78,8 @@ def control_panel_script(default_session_id: str) -> str:
     color: "#ffffff",
     cursor: "pointer",
     fontSize: "13px",
+    fontWeight: "700",
+    transition: "background 120ms ease, box-shadow 120ms ease, opacity 120ms ease",
     boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
   }});
 
@@ -50,7 +96,7 @@ def control_panel_script(default_session_id: str) -> str:
 
   const panel = document.createElement("div");
   Object.assign(panel.style, {{
-    width: "340px",
+    width: "720px",
     maxWidth: "calc(100vw - 32px)",
     background: "#ffffff",
     borderRadius: "12px",
@@ -64,8 +110,141 @@ def control_panel_script(default_session_id: str) -> str:
   Object.assign(title.style, {{
     fontSize: "16px",
     fontWeight: "700",
-    marginBottom: "12px",
+    marginBottom: "10px",
   }});
+
+  const contentLayout = document.createElement("div");
+  Object.assign(contentLayout.style, {{
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 0.95fr)",
+    gap: "14px",
+    alignItems: "start",
+  }});
+
+  const leftColumn = document.createElement("div");
+  Object.assign(leftColumn.style, {{
+    minWidth: "0",
+  }});
+
+  const rightColumn = document.createElement("div");
+  Object.assign(rightColumn.style, {{
+    minWidth: "0",
+  }});
+
+  const recordingState = document.createElement("div");
+  Object.assign(recordingState.style, {{
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: "10px 12px",
+    padding: "10px 12px",
+    marginBottom: "12px",
+    borderRadius: "10px",
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+  }});
+
+  const recordingPrimary = document.createElement("div");
+  Object.assign(recordingPrimary.style, {{
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    minWidth: "0",
+  }});
+
+  const recordingDot = document.createElement("div");
+  Object.assign(recordingDot.style, {{
+    width: "10px",
+    height: "10px",
+    borderRadius: "999px",
+    background: "#9ca3af",
+    flexShrink: "0",
+    transition: "background 120ms ease, box-shadow 120ms ease",
+  }});
+
+  const recordingCopy = document.createElement("div");
+  Object.assign(recordingCopy.style, {{
+    minWidth: "0",
+  }});
+
+  const recordingText = document.createElement("div");
+  recordingText.textContent = "Listo para grabar";
+  Object.assign(recordingText.style, {{
+    fontSize: "13px",
+    fontWeight: "600",
+    color: "#374151",
+  }});
+
+  const recordingHint = document.createElement("div");
+  recordingHint.textContent = "El microfono espera la orden de inicio";
+  Object.assign(recordingHint.style, {{
+    marginTop: "2px",
+    fontSize: "11px",
+    color: "#6b7280",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  }});
+
+  const recordingTimer = document.createElement("div");
+  recordingTimer.textContent = "00:00";
+  Object.assign(recordingTimer.style, {{
+    alignSelf: "start",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    background: "#e5e7eb",
+    color: "#374151",
+    fontSize: "12px",
+    fontWeight: "700",
+    fontVariantNumeric: "tabular-nums",
+  }});
+
+  const levelMeterWrap = document.createElement("div");
+  Object.assign(levelMeterWrap.style, {{
+    gridColumn: "1 / span 2",
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    alignItems: "center",
+    gap: "8px",
+  }});
+
+  const levelMeterTrack = document.createElement("div");
+  Object.assign(levelMeterTrack.style, {{
+    height: "8px",
+    borderRadius: "999px",
+    background: "#e5e7eb",
+    overflow: "hidden",
+  }});
+
+  const levelMeterFill = document.createElement("div");
+  Object.assign(levelMeterFill.style, {{
+    width: "0%",
+    height: "100%",
+    borderRadius: "999px",
+    background: "linear-gradient(90deg, #22c55e 0%, #f59e0b 60%, #ef4444 100%)",
+    transition: "width 80ms linear",
+  }});
+  levelMeterTrack.appendChild(levelMeterFill);
+
+  const levelMeterText = document.createElement("div");
+  levelMeterText.textContent = "Nivel 0%";
+  Object.assign(levelMeterText.style, {{
+    width: "62px",
+    textAlign: "right",
+    fontSize: "11px",
+    fontWeight: "600",
+    color: "#6b7280",
+    fontVariantNumeric: "tabular-nums",
+  }});
+
+  recordingCopy.appendChild(recordingText);
+  recordingCopy.appendChild(recordingHint);
+  recordingPrimary.appendChild(recordingDot);
+  recordingPrimary.appendChild(recordingCopy);
+  levelMeterWrap.appendChild(levelMeterTrack);
+  levelMeterWrap.appendChild(levelMeterText);
+  recordingState.appendChild(recordingPrimary);
+  recordingState.appendChild(recordingTimer);
+  recordingState.appendChild(levelMeterWrap);
 
   const inputLabel = document.createElement("label");
   inputLabel.textContent = "ID de sesion";
@@ -130,6 +309,128 @@ def control_panel_script(default_session_id: str) -> str:
     color: "#111827",
     cursor: "pointer",
   }});
+
+  const processingCard = document.createElement("div");
+  Object.assign(processingCard.style, {{
+    minHeight: "238px",
+    marginTop: "12px",
+    padding: "12px",
+    borderRadius: "12px",
+    border: "1px solid #e5e7eb",
+    background: "#f9fafb",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
+    textAlign: "center",
+    boxSizing: "border-box",
+  }});
+
+  const processingSpinner = document.createElement("div");
+  Object.assign(processingSpinner.style, {{
+    width: "42px",
+    height: "42px",
+    marginBottom: "14px",
+    borderRadius: "999px",
+    border: "4px solid #dbeafe",
+    borderTopColor: "#2563eb",
+    animation: "strudelVoicePanelSpin 0.9s linear infinite",
+    display: "none",
+  }});
+
+  const processingTitle = document.createElement("div");
+  processingTitle.textContent = "Palabras detectadas";
+  Object.assign(processingTitle.style, {{
+    fontSize: "15px",
+    fontWeight: "700",
+    color: "#374151",
+    marginTop: "2px",
+  }});
+
+  const processingHint = document.createElement("div");
+  processingHint.textContent = "Mientras grabas, aqui apareceran las palabras que ya se hayan convertido.";
+  Object.assign(processingHint.style, {{
+    marginTop: "8px",
+    fontSize: "12px",
+    lineHeight: "1.5",
+    color: "#6b7280",
+    maxWidth: "260px",
+  }});
+
+  const processingWords = document.createElement("div");
+  processingWords.className = "strudel-voice-scroll";
+  Object.assign(processingWords.style, {{
+    display: "grid",
+    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+    gridAutoRows: "36px",
+    gap: "6px",
+    width: "100%",
+    marginTop: "8px",
+    flex: "1 1 auto",
+    minHeight: "0",
+    alignItems: "stretch",
+    alignContent: "start",
+    maxHeight: "204px",
+    overflowY: "auto",
+    overflowX: "hidden",
+    paddingRight: "2px",
+    boxSizing: "border-box",
+    scrollbarGutter: "stable",
+  }});
+
+  const renderPreviewWords = () => {{
+    processingWords.replaceChildren();
+    const hasWords = state.previewWords.length > 0;
+
+    processingTitle.style.display = hasWords ? "none" : "block";
+    processingHint.style.display = hasWords ? "none" : "block";
+    processingWords.style.marginTop = hasWords ? "0" : "8px";
+
+    if (!hasWords) {{
+      const emptyState = document.createElement("div");
+      emptyState.textContent = state.isRecording
+        ? "Aun no hay palabras listas en este bloque."
+        : "Todavia no hay palabras convertidas.";
+      Object.assign(emptyState.style, {{
+        gridColumn: "1 / -1",
+        fontSize: "12px",
+        color: "#6b7280",
+        textAlign: "center",
+      }});
+      processingWords.appendChild(emptyState);
+      return;
+    }}
+
+    state.previewWords.forEach((item) => {{
+      const chip = document.createElement("div");
+      chip.textContent = `${{item.text}}(${{item.count}})`;
+      Object.assign(chip.style, {{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "36px",
+        width: "100%",
+        boxSizing: "border-box",
+        padding: "0 6px",
+        borderRadius: "12px",
+        border: "1px solid #d1d5db",
+        background: "#ffffff",
+        color: "#2563eb",
+        fontSize: "12px",
+        fontWeight: "700",
+        textAlign: "center",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      }});
+      processingWords.appendChild(chip);
+    }});
+  }};
+
+  processingCard.appendChild(processingSpinner);
+  processingCard.appendChild(processingTitle);
+  processingCard.appendChild(processingHint);
+  processingCard.appendChild(processingWords);
 
   const modeLabel = document.createElement("label");
   modeLabel.textContent = "Tipo de importacion";
@@ -207,6 +508,18 @@ def control_panel_script(default_session_id: str) -> str:
     cursor: "pointer",
   }});
 
+  const stackSection = (elements) => {{
+    const wrapper = document.createElement("div");
+    Object.assign(wrapper.style, {{
+      display: "flex",
+      flexDirection: "column",
+    }});
+    elements.forEach((element) => {{
+      wrapper.appendChild(element);
+    }});
+    return wrapper;
+  }};
+
   const status = document.createElement("div");
   Object.assign(status.style, {{
     minHeight: "18px",
@@ -214,6 +527,42 @@ def control_panel_script(default_session_id: str) -> str:
     fontSize: "12px",
     color: "#374151",
   }});
+
+  const visualizerCard = document.createElement("div");
+  Object.assign(visualizerCard.style, {{
+    marginTop: "12px",
+    padding: "10px 12px 12px",
+    borderRadius: "10px",
+    border: "1px solid #e5e7eb",
+    background: "#0f172a",
+    opacity: "0.65",
+    transition: "opacity 120ms ease",
+  }});
+
+  const visualizerLabel = document.createElement("div");
+  visualizerLabel.textContent = "Senal del microfono";
+  Object.assign(visualizerLabel.style, {{
+    marginBottom: "8px",
+    fontSize: "11px",
+    fontWeight: "600",
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "#cbd5e1",
+  }});
+
+  const visualizerCanvas = document.createElement("canvas");
+  visualizerCanvas.width = 308;
+  visualizerCanvas.height = 76;
+  Object.assign(visualizerCanvas.style, {{
+    width: "100%",
+    height: "76px",
+    display: "block",
+    borderRadius: "8px",
+    background: "#020617",
+  }});
+
+  visualizerCard.appendChild(visualizerLabel);
+  visualizerCard.appendChild(visualizerCanvas);
 
   const normalizeSessionId = () => {{
     const candidate = sessionInput.value.trim();
@@ -224,17 +573,317 @@ def control_panel_script(default_session_id: str) -> str:
     return candidate;
   }};
 
-  const setBusy = (busy) => {{
-    [startButton, stopButton, importButton, closeButton, sessionInput, modeSelect].forEach((element) => {{
-      element.disabled = busy;
-    }});
-    openButton.disabled = busy;
-    openButton.style.opacity = busy ? "0.7" : "1";
-  }};
-
   const setStatus = (message, isError = false) => {{
     status.textContent = message;
     status.style.color = isError ? "#b91c1c" : "#374151";
+  }};
+
+  const formatElapsed = (elapsedMs) => {{
+    const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+    const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
+    const seconds = String(totalSeconds % 60).padStart(2, "0");
+    return `${{minutes}}:${{seconds}}`;
+  }};
+
+  const updateRecordingClock = () => {{
+    if (!state.isRecording || !state.recordingStartedAt) {{
+      recordingTimer.textContent = "00:00";
+      return;
+    }}
+    recordingTimer.textContent = formatElapsed(Date.now() - state.recordingStartedAt);
+  }};
+
+  const startRecordingClock = () => {{
+    state.recordingStartedAt = Date.now();
+    updateRecordingClock();
+    if (state.recordingTimerId) {{
+      window.clearInterval(state.recordingTimerId);
+    }}
+    state.recordingTimerId = window.setInterval(updateRecordingClock, 250);
+  }};
+
+  const stopRecordingClock = () => {{
+    if (state.recordingTimerId) {{
+      window.clearInterval(state.recordingTimerId);
+      state.recordingTimerId = 0;
+    }}
+    state.recordingStartedAt = 0;
+    updateRecordingClock();
+  }};
+
+  const setLevelMeter = (level) => {{
+    const safeLevel = Math.max(0, Math.min(1, level));
+    levelMeterFill.style.width = `${{Math.round(safeLevel * 100)}}%`;
+    levelMeterText.textContent = `Nivel ${{String(Math.round(safeLevel * 100)).padStart(2, "0")}}%`;
+  }};
+
+  const stopPreviewPolling = () => {{
+    if (state.previewPollId) {{
+      window.clearInterval(state.previewPollId);
+      state.previewPollId = 0;
+    }}
+  }};
+
+  const refreshWordPreview = async () => {{
+    const sessionId = sessionInput.value.trim();
+    if (!sessionId) {{
+      state.previewWords = [];
+      renderPreviewWords();
+      return;
+    }}
+
+    try {{
+      const response = await fetch(
+        `${{state.baseUrl}}/samples/${{encodeURIComponent(sessionId)}}/manifest?t=${{Date.now()}}`,
+      );
+      if (!response.ok) {{
+        if (response.status === 404) {{
+          state.previewWords = [];
+          renderPreviewWords();
+          return;
+        }}
+        throw new Error(String(response.status));
+      }}
+
+      const manifest = await response.json();
+      const words = Array.isArray(manifest?.words) ? manifest.words : [];
+      const counts = new Map();
+      words.forEach((item) => {{
+        const label = String(item.text || item.name || "").trim().toLowerCase();
+        if (!label) {{
+          return;
+        }}
+        counts.set(label, (counts.get(label) || 0) + 1);
+      }});
+
+      state.previewWords = Array.from(counts.entries())
+        .sort((a, b) => {{
+          if (b[1] !== a[1]) {{
+            return b[1] - a[1];
+          }}
+          return a[0].localeCompare(b[0], undefined, {{ sensitivity: "base" }});
+        }})
+        .map(([text, count]) => ({{ text, count }}));
+      renderPreviewWords();
+    }} catch (_error) {{
+      if (!state.isRecording && !state.isProcessing) {{
+        state.previewWords = [];
+      }}
+      renderPreviewWords();
+    }}
+  }};
+
+  const startPreviewPolling = () => {{
+    stopPreviewPolling();
+    void refreshWordPreview();
+    state.previewPollId = window.setInterval(() => {{
+      void refreshWordPreview();
+    }}, 900);
+  }};
+
+  const paintVisualizerIdle = () => {{
+    const context = visualizerCanvas.getContext("2d");
+    if (!context) {{
+      return;
+    }}
+
+    const width = visualizerCanvas.width;
+    const height = visualizerCanvas.height;
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#020617";
+    context.fillRect(0, 0, width, height);
+    context.strokeStyle = "rgba(148, 163, 184, 0.35)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(0, height / 2);
+    context.lineTo(width, height / 2);
+    context.stroke();
+  }};
+
+  const drawVisualizerFrame = (analyser, samples) => {{
+    const context = visualizerCanvas.getContext("2d");
+    if (!context) {{
+      return;
+    }}
+
+    analyser.getByteTimeDomainData(samples);
+    const width = visualizerCanvas.width;
+    const height = visualizerCanvas.height;
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = "#020617";
+    context.fillRect(0, 0, width, height);
+
+    let totalDeviation = 0;
+    for (let i = 0; i < samples.length; i += 1) {{
+      totalDeviation += Math.abs(samples[i] - 128);
+    }}
+    const amplitude = totalDeviation / samples.length;
+    const level = Math.min(1, amplitude / 36);
+    setLevelMeter(level);
+
+    context.fillStyle = "rgba(239, 68, 68, 0.18)";
+    context.fillRect(0, height - 6, width * level, 6);
+
+    context.strokeStyle = "rgba(239, 68, 68, 0.95)";
+    context.lineWidth = 2;
+    context.beginPath();
+    const sliceWidth = width / samples.length;
+    let x = 0;
+    for (let i = 0; i < samples.length; i += 1) {{
+      const value = samples[i] / 128.0;
+      const y = (value * height) / 2;
+      if (i === 0) {{
+        context.moveTo(x, y);
+      }} else {{
+        context.lineTo(x, y);
+      }}
+      x += sliceWidth;
+    }}
+    context.stroke();
+  }};
+
+  const stopVisualizer = async () => {{
+    const activeVisualizer = state.visualizer;
+    state.visualizer = null;
+
+    if (!activeVisualizer) {{
+      paintVisualizerIdle();
+      setLevelMeter(0);
+      return;
+    }}
+
+    if (activeVisualizer.animationFrame) {{
+      cancelAnimationFrame(activeVisualizer.animationFrame);
+    }}
+
+    try {{
+      activeVisualizer.source.disconnect();
+    }} catch (_error) {{
+      // Ignore disconnect failures during cleanup.
+    }}
+
+    activeVisualizer.stream.getTracks().forEach((track) => track.stop());
+
+    if (activeVisualizer.audioContext && activeVisualizer.audioContext.state !== "closed") {{
+      try {{
+        await activeVisualizer.audioContext.close();
+      }} catch (_error) {{
+        // Ignore close failures during cleanup.
+      }}
+    }}
+
+    paintVisualizerIdle();
+    setLevelMeter(0);
+  }};
+
+  const startVisualizer = async () => {{
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
+      throw new Error("Esta ventana no permite mostrar la senal del microfono.");
+    }}
+
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) {{
+      throw new Error("AudioContext no esta disponible en esta ventana.");
+    }}
+
+    await stopVisualizer();
+
+    const stream = await navigator.mediaDevices.getUserMedia({{
+      audio: {{
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      }},
+    }});
+
+    const audioContext = new AudioContextCtor();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.85;
+    source.connect(analyser);
+
+    const samples = new Uint8Array(analyser.fftSize);
+    state.visualizer = {{
+      audioContext,
+      stream,
+      source,
+      analyser,
+      animationFrame: 0,
+    }};
+
+    if (audioContext.state === "suspended") {{
+      await audioContext.resume().catch(() => undefined);
+    }}
+
+    const render = () => {{
+      if (!state.visualizer || state.visualizer.analyser !== analyser) {{
+        return;
+      }}
+      drawVisualizerFrame(analyser, samples);
+      state.visualizer.animationFrame = requestAnimationFrame(render);
+    }};
+
+    render();
+  }};
+
+  const refreshControls = () => {{
+    sessionInput.disabled = state.busy || state.isRecording;
+    modeSelect.disabled = state.busy || state.isRecording || state.isProcessing;
+    openStorageButton.disabled = state.busy || state.isRecording || state.isProcessing;
+    startButton.disabled = state.busy || state.isRecording || state.isProcessing;
+    stopButton.disabled = state.busy || !state.isRecording || state.isProcessing;
+    importButton.disabled = state.busy || state.isRecording || state.isProcessing;
+    closeButton.disabled = state.busy;
+    openButton.disabled = state.busy;
+
+    [startButton, stopButton, importButton, closeButton, openStorageButton].forEach((button) => {{
+      button.style.opacity = button.disabled ? "0.6" : "1";
+      button.style.cursor = button.disabled ? "not-allowed" : "pointer";
+    }});
+
+    openButton.style.opacity = state.busy ? "0.7" : "1";
+    openButton.textContent = state.isRecording ? "Voice REC" : "Voice";
+    openButton.style.background = state.isRecording ? "#b91c1c" : "#111827";
+    openButton.style.boxShadow = state.isRecording
+      ? "0 0 0 4px rgba(239, 68, 68, 0.18), 0 4px 14px rgba(0, 0, 0, 0.25)"
+      : "0 4px 14px rgba(0, 0, 0, 0.25)";
+
+    recordingDot.style.background = state.isRecording ? "#ef4444" : "#9ca3af";
+    recordingDot.style.boxShadow = state.isRecording ? "0 0 0 6px rgba(239, 68, 68, 0.18)" : "none";
+    recordingDot.style.animation = state.isRecording ? "strudelVoicePanelPulse 1.4s ease-out infinite" : "none";
+    recordingText.textContent = state.isRecording ? "Grabando ahora" : "Listo para grabar";
+    recordingText.style.color = state.isRecording ? "#b91c1c" : "#374151";
+    recordingHint.textContent = state.isRecording
+      ? "Microfono activo con monitoreo en tiempo real"
+      : "El microfono espera la orden de inicio";
+    recordingTimer.style.background = state.isRecording ? "#fee2e2" : "#e5e7eb";
+    recordingTimer.style.color = state.isRecording ? "#b91c1c" : "#374151";
+    visualizerCard.style.opacity = state.isRecording ? "1" : "0.65";
+
+    processingCard.style.background = state.isProcessing ? "#eff6ff" : "#f9fafb";
+    processingCard.style.borderColor = state.isProcessing ? "#bfdbfe" : "#e5e7eb";
+    processingSpinner.style.display = state.isProcessing ? "block" : "none";
+    processingTitle.textContent = state.isProcessing ? "Procesando voz" : "Palabras detectadas";
+    processingTitle.style.color = state.isProcessing ? "#1d4ed8" : "#374151";
+    processingHint.textContent = state.isRecording
+      ? "Cada bloque convertido va anadiendo palabras aqui en tiempo real."
+      : state.isProcessing
+        ? "Terminando de cortar el audio y actualizando las palabras detectadas."
+        : "Mientras grabas, aqui apareceran las palabras que ya se hayan convertido.";
+    processingHint.style.color = state.isProcessing ? "#1e40af" : "#6b7280";
+    renderPreviewWords();
+  }};
+
+  const setBusy = (busy) => {{
+    state.busy = busy;
+    refreshControls();
+  }};
+
+  const updatePanelLayout = () => {{
+    const compact = window.innerWidth < 980;
+    contentLayout.style.gridTemplateColumns = compact ? "1fr" : "minmax(0, 1.05fr) minmax(0, 0.95fr)";
+    rightColumn.style.marginTop = compact ? "0" : "0";
   }};
 
   const updateStorageInfo = async () => {{
@@ -292,9 +941,21 @@ def control_panel_script(default_session_id: str) -> str:
     try {{
       const sessionId = normalizeSessionId();
       setBusy(true);
+      state.isProcessing = false;
+      state.previewWords = [];
+      renderPreviewWords();
       setStatus("Iniciando grabacion...");
       await requestJson("/start", {{ session_id: sessionId }});
-      setStatus(`Grabacion iniciada: ${{sessionId}}`);
+      state.isRecording = true;
+      startRecordingClock();
+      startPreviewPolling();
+      refreshControls();
+      try {{
+        await startVisualizer();
+        setStatus(`Grabacion iniciada: ${{sessionId}}. Habla ahora para ver la senal.`);
+      }} catch (_visualizerError) {{
+        setStatus(`Grabacion iniciada: ${{sessionId}}. La vista del microfono no esta disponible en esta ventana.`);
+      }}
     }} catch (error) {{
       setStatus(`Error al iniciar: ${{String(error)}}`, true);
     }} finally {{
@@ -305,11 +966,23 @@ def control_panel_script(default_session_id: str) -> str:
   stopButton.addEventListener("click", async () => {{
     try {{
       const sessionId = normalizeSessionId();
+      state.isRecording = false;
+      state.isProcessing = true;
+      stopRecordingClock();
+      await stopVisualizer();
+      startPreviewPolling();
       setBusy(true);
       setStatus("Deteniendo la grabacion y generando muestras...");
       await requestJson("/stop", {{ session_id: sessionId }});
+      state.isProcessing = false;
+      stopPreviewPolling();
+      await refreshWordPreview();
+      refreshControls();
       setStatus(`Grabacion detenida: ${{sessionId}}`);
     }} catch (error) {{
+      state.isProcessing = false;
+      stopPreviewPolling();
+      refreshControls();
       setStatus(`Error al detener: ${{String(error)}}`, true);
     }} finally {{
       setBusy(false);
@@ -369,6 +1042,8 @@ def control_panel_script(default_session_id: str) -> str:
 
   sessionInput.addEventListener("input", () => {{
     updateStorageInfo();
+    state.previewWords = [];
+    renderPreviewWords();
   }});
 
   closeButton.addEventListener("click", () => {{
@@ -381,23 +1056,46 @@ def control_panel_script(default_session_id: str) -> str:
     }}
   }});
 
+  window.addEventListener("beforeunload", () => {{
+    stopPreviewPolling();
+    stopRecordingClock();
+    void stopVisualizer();
+  }});
+  window.addEventListener("resize", updatePanelLayout);
+
   actions.appendChild(startButton);
   actions.appendChild(stopButton);
   actions.appendChild(importButton);
   panel.appendChild(title);
-  panel.appendChild(inputLabel);
-  panel.appendChild(sessionInput);
-  panel.appendChild(storageLabel);
-  panel.appendChild(storageInfo);
-  panel.appendChild(openStorageButton);
-  panel.appendChild(modeLabel);
-  panel.appendChild(modeSelect);
-  panel.appendChild(actions);
-  panel.appendChild(status);
-  panel.appendChild(closeButton);
+  leftColumn.appendChild(stackSection([
+    recordingState,
+    modeLabel,
+    modeSelect,
+    actions,
+    visualizerCard,
+    status,
+    closeButton,
+  ]));
+  rightColumn.appendChild(stackSection([
+    inputLabel,
+    sessionInput,
+    storageLabel,
+    storageInfo,
+    openStorageButton,
+    processingCard,
+  ]));
+  contentLayout.appendChild(leftColumn);
+  contentLayout.appendChild(rightColumn);
+  panel.appendChild(contentLayout);
   overlay.appendChild(panel);
   document.body.appendChild(openButton);
   document.body.appendChild(overlay);
+  paintVisualizerIdle();
+  setLevelMeter(0);
+  updateRecordingClock();
+  renderPreviewWords();
+  updatePanelLayout();
+  refreshControls();
   updateStorageInfo();
   return "installed";
 }})();

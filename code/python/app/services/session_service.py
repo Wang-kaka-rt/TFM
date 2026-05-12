@@ -203,6 +203,7 @@ class SessionService:
     async def stop(self, session_id: str) -> SessionInfo:
         runtime = self._require_runtime(session_id)
         runtime.stop_event.set()
+        self._manager.set_processing(session_id, event="stopping")
         if runtime.task is not None:
             try:
                 await runtime.task
@@ -279,7 +280,10 @@ class SessionService:
                     sample_rate=self._settings.sample_rate,
                     channels=self._settings.channels,
                     chunk_index=chunk_index,
+                    stop_requested=runtime.stop_event.is_set,
                 )
+                if audio_info.duration_seconds <= 0:
+                    break
                 words = await asyncio.to_thread(
                     self._transcriber.transcribe,
                     audio_path,

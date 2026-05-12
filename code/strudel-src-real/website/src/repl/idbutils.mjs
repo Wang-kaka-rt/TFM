@@ -5,7 +5,7 @@ import { logger } from '@strudel/core';
 //utilites for writing and reading to the indexdb
 
 export const userSamplesDBConfig = {
-  dbName: 'samples',
+  dbName: 'strudel-voice-user-samples',
   table: 'usersamples',
   columns: ['blob', 'title'],
   version: 1,

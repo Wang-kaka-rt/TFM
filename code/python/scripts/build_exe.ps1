@@ -90,10 +90,10 @@ try {
     }
     $strudelTarget = Join-Path $projectRoot "static\strudel"
     if (Test-Path $strudelTarget) {
-      Remove-Item $strudelTarget -Recurse -Force
+      Microsoft.PowerShell.Management\Remove-Item $strudelTarget -Recurse -Force
     }
-    New-Item -ItemType Directory -Path $strudelTarget -Force | Out-Null
-    Copy-Item (Join-Path $resolvedStrudelDist "*") $strudelTarget -Recurse -Force
+    Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $strudelTarget -Force | Out-Null
+    Microsoft.PowerShell.Management\Copy-Item (Join-Path $resolvedStrudelDist "*") $strudelTarget -Recurse -Force
     Write-Host "Synced Strudel static assets from $resolvedStrudelDist to $strudelTarget"
   }
 
@@ -101,7 +101,7 @@ try {
   Get-Process -Name $Name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   $distExe = Join-Path $projectRoot ("dist\" + $Name + ".exe")
   if (Test-Path $distExe) {
-    Remove-Item $distExe -Force -ErrorAction SilentlyContinue
+    Microsoft.PowerShell.Management\Remove-Item $distExe -Force -ErrorAction SilentlyContinue
   }
 
   Write-Host "[1/3] Installing runtime dependencies..."

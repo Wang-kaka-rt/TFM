@@ -5,6 +5,7 @@ import struct
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 @dataclass(slots=True)
@@ -24,6 +25,7 @@ class BaseRecorder:
         sample_rate: int,
         channels: int,
         chunk_index: int,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> ChunkAudioInfo:
         raise NotImplementedError
 
@@ -37,6 +39,7 @@ class MockToneRecorder(BaseRecorder):
         sample_rate: int,
         channels: int,
         chunk_index: int,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> ChunkAudioInfo:
         frame_count = max(1, int(duration_seconds * sample_rate))
         frequency = 220 + (chunk_index % 5) * 55
@@ -85,25 +88,37 @@ class MicrophoneRecorder(BaseRecorder):
         sample_rate: int,
         channels: int,
         chunk_index: int,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> ChunkAudioInfo:
         frame_count = max(1, int(duration_seconds * sample_rate))
-        recording = self._sounddevice.rec(
-            frame_count,
+        block_size = min(2048, frame_count)
+        captured_frames = 0
+        captured_bytes = bytearray()
+
+        with self._sounddevice.RawInputStream(
             samplerate=sample_rate,
             channels=channels,
             dtype="int16",
             device=self._device,
-        )
-        self._sounddevice.wait()
+            blocksize=block_size,
+        ) as stream:
+            while captured_frames < frame_count:
+                if stop_requested is not None and stop_requested():
+                    break
+
+                frames_to_read = min(block_size, frame_count - captured_frames)
+                buffer, _overflowed = stream.read(frames_to_read)
+                captured_bytes.extend(buffer)
+                captured_frames += frames_to_read
 
         with wave.open(str(output_path), "wb") as wav_file:
             wav_file.setnchannels(channels)
             wav_file.setsampwidth(2)
             wav_file.setframerate(sample_rate)
-            wav_file.writeframes(recording.tobytes())
+            wav_file.writeframes(bytes(captured_bytes))
 
         return ChunkAudioInfo(
-            duration_seconds=frame_count / sample_rate,
+            duration_seconds=captured_frames / sample_rate,
             sample_rate=sample_rate,
             channels=channels,
             sample_width=2,

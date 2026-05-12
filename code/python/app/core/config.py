@@ -7,26 +7,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 PYTHON_SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
-
-def _platform_config_dir() -> Path:
-    if sys.platform == "win32":
-        return Path.home() / "AppData" / "Local" / "StrudelVoice"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "StrudelVoice"
-    return Path.home() / ".config" / "strudel-voice"
-
-
 def resolve_env_files() -> tuple[str, ...]:
-    # pydantic-settings gives later env files higher priority. Keep the
-    # machine-wide desktop config as a fallback, and let repo-local config win
-    # during development.
+    # Only load project-local env files so desktop/user overrides cannot
+    # silently change recording behavior outside the repository.
     candidates: list[Path] = [
-        _platform_config_dir() / ".env",
         PYTHON_SERVICE_ROOT / ".env",
         Path.cwd() / ".env",
     ]
-    if getattr(sys, "frozen", False):
-        candidates.append(Path(sys.executable).resolve().parent / ".env")
 
     unique_files: list[str] = []
     seen: set[str] = set()
@@ -60,7 +47,7 @@ class Settings(BaseSettings):
     recorder_backend: str = "mock"
     microphone_device: int | None = None
     mock_chunk_prefix: str = "chunk"
-    max_chunks_per_session: int = 4
+    max_chunks_per_session: int = 0
     enable_phrase_and_sentence_exports: bool = True
     strudel_base_url: str = "http://127.0.0.1:8787"
     session_poll_interval_seconds: float = 0.05

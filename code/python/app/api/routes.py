@@ -50,6 +50,11 @@ async def healthcheck() -> ApiMessage:
     return ApiMessage(message="backend is healthy")
 
 
+@router.get("/runtime", tags=["system"])
+async def runtime_info() -> dict[str, object]:
+    return session_service.get_runtime_diagnostics()
+
+
 @router.get("/storage", tags=["system"])
 async def storage_info(
     session_id: str | None = Query(default=None, description="Optional session id for resolved storage paths"),
@@ -99,6 +104,9 @@ async def open_storage_path(
 async def start_session(payload: StartSessionRequest) -> SessionResponse:
     try:
         session = await session_service.start(payload.session_id)
+    except RuntimeError as exc:
+        logger.warning("Failed to start session '%s': %s", payload.session_id, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to start session '%s'", payload.session_id)
         raise HTTPException(
@@ -114,7 +122,23 @@ async def stop_session(payload: StopSessionRequest) -> SessionResponse:
         session = await session_service.stop(payload.session_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"session '{payload.session_id}' not found") from exc
-    return SessionResponse(message="session stopped", session=session)
+    return SessionResponse(message="solicitud de parada enviada", session=session)
+
+
+@router.post("/browser/chunk", tags=["session"])
+async def upload_browser_chunk(
+    request: Request,
+    session_id: str = Query(..., description="Session id for browser-captured audio"),
+) -> dict[str, int | str]:
+    audio_bytes = await request.body()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="browser audio chunk is empty")
+    try:
+        return await session_service.submit_browser_chunk(session_id, audio_bytes)
+    except SessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"session '{session_id}' not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/status", response_model=StatusResponse, tags=["session"])

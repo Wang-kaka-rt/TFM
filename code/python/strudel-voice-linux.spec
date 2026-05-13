@@ -1,7 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files, collect_all
+from pathlib import Path
 
-datas = [('static', 'static')]
+from PyInstaller.utils.hooks import collect_all, collect_data_files
+
+project_root = Path.cwd()
+datas = []
+for relative_path in ("static", "assets/ffmpeg", "assets/models"):
+    candidate = project_root / relative_path
+    if candidate.exists():
+        datas.append((str(candidate), relative_path))
 binaries = []
 hiddenimports = [
     'uvicorn',
@@ -18,6 +25,7 @@ hiddenimports = [
     'tokenizers',
     'huggingface_hub',
     'av',
+    'silero_vad',
 ]
 datas += collect_data_files('app')
 tmp_ret = collect_all('faster_whisper')
@@ -25,6 +33,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('ctranslate2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('tokenizers')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('silero_vad')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 a = Analysis(

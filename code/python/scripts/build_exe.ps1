@@ -115,12 +115,35 @@ try {
   Invoke-PythonModule -Arguments @("-m", "pip", "install", "-r", "packaging/requirements-packaging.txt")
 
   Write-Host "[3/3] Building EXE with PyInstaller..."
+  $pyCompatArgs = @()
+  if ($pythonCommand.Length -gt 1) {
+    $pyCompatArgs = $pythonCommand[1..($pythonCommand.Length - 1)]
+  }
+  $portaudioAliasDir = Join-Path $projectRoot "build\portaudio-binaries-alias"
+  if (Test-Path $portaudioAliasDir) {
+    Microsoft.PowerShell.Management\Remove-Item $portaudioAliasDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  Microsoft.PowerShell.Management\New-Item -ItemType Directory -Path $portaudioAliasDir -Force | Out-Null
+  $portaudio64Path = (& $pythonCommand[0] @pyCompatArgs -c "import pathlib; import _sounddevice_data; p = pathlib.Path(next(iter(_sounddevice_data.__path__))) / 'portaudio-binaries' / 'libportaudio64bit.dll'; print(p if p.exists() else '')")
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to resolve bundled PortAudio runtime path."
+  }
+  $portaudio64Path = ($portaudio64Path | Select-Object -Last 1).Trim()
+  $portaudioArm64Alias = $null
+  if ($portaudio64Path) {
+    $portaudioArm64Alias = Join-Path $portaudioAliasDir "libportaudioarm64.dll"
+    Microsoft.PowerShell.Management\Copy-Item $portaudio64Path $portaudioArm64Alias -Force
+    Write-Host "Prepared PortAudio ARM64 alias from $portaudio64Path"
+  }
+
   $pyiArgs = @(
     "--noconfirm",
     "--clean",
     "--name", $Name,
     "--onefile",
     "--collect-data", "app",
+    "--hidden-import", "sounddevice",
+    "--hidden-import", "_cffi_backend",
     "--hidden-import", "uvicorn",
     "--hidden-import", "uvicorn.config",
     "--hidden-import", "uvicorn.logging",
@@ -135,11 +158,19 @@ try {
     "--hidden-import", "tokenizers",
     "--hidden-import", "huggingface_hub",
     "--hidden-import", "av",
+    "--collect-all", "sounddevice",
+    "--collect-all", "_sounddevice_data",
     "--collect-all", "faster_whisper",
     "--collect-all", "ctranslate2",
     "--collect-all", "tokenizers",
     $Entry
   )
+
+  if ($portaudioArm64Alias) {
+    $pyiArgs += @(
+      "--add-data", "$portaudioArm64Alias;_sounddevice_data\portaudio-binaries"
+    )
+  }
 
   if (-not $IncludeHeavyAsr) {
     # Keep default package lightweight; heavy ASR stacks can be enabled explicitly.
@@ -178,6 +209,7 @@ try {
 
   Invoke-PythonModule -Arguments (@("-m", "PyInstaller") + $pyiArgs)
 
+  Write-Host "Bundled audio runtime: sounddevice, _sounddevice_data, _cffi_backend"
   Write-Host "Build finished. Check dist/$Name.exe"
 }
 finally {

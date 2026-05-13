@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import webbrowser
+import platform
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import quote
@@ -123,12 +124,17 @@ def configure_runtime_defaults(logger: logging.Logger) -> None:
         default_samples_root = Path.home() / "Documents" / "StrudelVoice" / "samples"
     else:
         default_samples_root = Path.home() / "Documents" / "strudel-voice" / "samples"
+    machine_name = platform.machine().lower()
+    is_windows_arm = sys.platform == "win32" and machine_name in {"arm64", "aarch64"}
+    is_linux = sys.platform.startswith("linux")
+    default_recorder_backend = "browser" if is_windows_arm or is_linux else "microphone"
     defaults = {
-        "STRUDEL_RECORDER_BACKEND": "microphone",
+        "STRUDEL_RECORDER_BACKEND": default_recorder_backend,
         "STRUDEL_TRANSCRIBER_BACKEND": "faster-whisper",
         "STRUDEL_VAD_BACKEND": "silero",
         "STRUDEL_ENABLE_VAD": "true",
         "STRUDEL_SAMPLES_ROOT": str(default_samples_root),
+        "STRUDEL_CHUNK_DURATION_SECONDS": "1.5" if is_windows_arm else "2.5",
     }
     for key, value in defaults.items():
         if key not in os.environ:
@@ -136,10 +142,12 @@ def configure_runtime_defaults(logger: logging.Logger) -> None:
     safe_log(
         logger,
         "info",
-        "Runtime defaults recorder=%s transcriber=%s vad=%s",
+        "Runtime defaults recorder=%s transcriber=%s vad=%s chunk=%s machine=%s",
         os.environ.get("STRUDEL_RECORDER_BACKEND"),
         os.environ.get("STRUDEL_TRANSCRIBER_BACKEND"),
         os.environ.get("STRUDEL_VAD_BACKEND"),
+        os.environ.get("STRUDEL_CHUNK_DURATION_SECONDS"),
+        machine_name,
     )
 
 

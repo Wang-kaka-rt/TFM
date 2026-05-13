@@ -54,7 +54,13 @@ class SessionManager:
         self._active_session_id = session_id
         return session
 
-    def set_processing(self, session_id: str, event: str = "processing") -> SessionInfo:
+    def set_processing(
+        self,
+        session_id: str,
+        event: str = "processing",
+        *,
+        release_active: bool = False,
+    ) -> SessionInfo:
         session = self.require(session_id)
         updated = session.model_copy(
             update={
@@ -64,6 +70,8 @@ class SessionManager:
             }
         )
         self._sessions[session_id] = updated
+        if release_active and self._active_session_id == session_id:
+            self._active_session_id = None
         return updated
 
     def stop(self, session_id: str) -> SessionInfo:

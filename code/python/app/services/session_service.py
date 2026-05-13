@@ -16,7 +16,13 @@ from app.core.session_manager import SessionManager
 from app.models.session import SessionInfo
 from app.services.aggregator import NlpAggregator
 from app.services.errors import SessionNotFoundError
-from app.services.recorder import BaseRecorder, create_recorder
+from app.services.recorder import (
+    BaseRecorder,
+    ChunkAudioInfo,
+    create_recorder,
+    get_microphone_diagnostics,
+    get_wav_audio_info,
+)
 from app.services.refiner import BaseRefiner, create_refiner
 from app.services.transcriber import BaseTranscriber, WordTiming, create_transcriber
 from app.services.vad import BaseVoiceActivityDetector, create_vad
@@ -80,7 +86,10 @@ class SessionRuntime:
     strudel_script_path: Path
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
+    finalize_task: asyncio.Task[None] | None = None
     chunks: list[ChunkRecord] = field(default_factory=list)
+    next_chunk_index: int = 0
+    chunk_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class SessionService:
@@ -88,19 +97,28 @@ class SessionService:
         self._settings = settings
         self._manager = SessionManager()
         self._effective_recorder_backend = settings.recorder_backend
+        self._recorder_init_error: str | None = None
         try:
             self._recorder = create_recorder(
                 settings.recorder_backend,
                 microphone_device=settings.microphone_device,
             )
+            self._recorder.validate_input(
+                sample_rate=settings.sample_rate,
+                channels=settings.channels,
+            )
         except Exception as exc:
             logger.warning(
-                "Failed to initialize recorder backend '%s' (%s); fallback to 'mock'.",
+                "Failed to initialize recorder backend '%s' (%s); startup will be blocked.",
                 settings.recorder_backend,
                 exc,
+                exc_info=True,
             )
+            self._recorder_init_error = str(exc)
             self._recorder = create_recorder("mock", microphone_device=settings.microphone_device)
             self._effective_recorder_backend = "mock"
+        else:
+            self._recorder_init_error = None
 
         self._effective_transcriber_backend = settings.transcriber_backend
         try:
@@ -169,6 +187,11 @@ class SessionService:
 
     async def start(self, session_id: str) -> SessionInfo:
         async with self._lock:
+            if self._settings.recorder_backend not in {"mock", "browser"} and self._recorder_init_error is not None:
+                raise RuntimeError(
+                    "Microphone recording is unavailable; "
+                    f"failed to initialize '{self._settings.recorder_backend}': {self._recorder_init_error}"
+                )
             if self._settings.transcriber_backend != "mock" and self._effective_transcriber_backend == "mock":
                 raise RuntimeError(
                     "Real speech recognition is unavailable; "
@@ -196,24 +219,20 @@ class SessionService:
                     "strudel_script_path": str(runtime.strudel_script_path),
                 },
             )
-            runtime.task = asyncio.create_task(self._record_session(runtime))
-            runtime.task.add_done_callback(lambda task: self._handle_runtime_task_done(runtime, task))
+            self._write_artifacts(runtime)
+            if self._effective_recorder_backend != "browser":
+                runtime.task = asyncio.create_task(self._record_session(runtime))
+                runtime.task.add_done_callback(lambda task: self._handle_runtime_task_done(runtime, task))
             return session
 
     async def stop(self, session_id: str) -> SessionInfo:
         runtime = self._require_runtime(session_id)
         runtime.stop_event.set()
-        self._manager.set_processing(session_id, event="stopping")
-        if runtime.task is not None:
-            try:
-                await runtime.task
-            except asyncio.CancelledError:
-                logger.warning("Session task was cancelled before stop: %s", session_id)
-        self._manager.set_processing(session_id, event="finalizing")
-        if self._settings.enable_refinement:
-            await asyncio.to_thread(self._refine_runtime_words, runtime)
-        self._write_artifacts(runtime)
-        return self._manager.stop(session_id)
+        session = self._manager.set_processing(session_id, event="stopping", release_active=True)
+        if runtime.finalize_task is None or runtime.finalize_task.done():
+            runtime.finalize_task = asyncio.create_task(self._finalize_stop(runtime))
+            runtime.finalize_task.add_done_callback(lambda task: self._handle_finalize_task_done(runtime, task))
+        return session
 
     def get(self, session_id: str) -> SessionInfo | None:
         return self._manager.get(session_id)
@@ -259,6 +278,71 @@ class SessionService:
             "slice_success_rate_percent": slice_success_rate_percent,
         }
 
+    def get_runtime_diagnostics(self) -> dict[str, object]:
+        recorder_ready = self._settings.recorder_backend in {"mock", "browser"} or self._recorder_init_error is None
+        transcriber_ready = self._settings.transcriber_backend == "mock" or self._transcriber_init_error is None
+        microphone = None
+        if self._settings.recorder_backend == "microphone":
+            microphone = get_microphone_diagnostics(
+                device=self._settings.microphone_device,
+                sample_rate=self._settings.sample_rate,
+                channels=self._settings.channels,
+            )
+
+        return {
+            "recorder": {
+                "configured_backend": self._settings.recorder_backend,
+                "effective_backend": self._effective_recorder_backend,
+                "ready": recorder_ready,
+                "startup_blocked": not recorder_ready,
+                "init_error": self._recorder_init_error,
+                "microphone_device": self._settings.microphone_device,
+                "chunk_duration_seconds": self._settings.chunk_duration_seconds,
+            },
+            "transcriber": {
+                "configured_backend": self._settings.transcriber_backend,
+                "effective_backend": self._effective_transcriber_backend,
+                "ready": transcriber_ready,
+                "startup_blocked": not transcriber_ready,
+                "init_error": self._transcriber_init_error,
+            },
+            "audio": microphone,
+            "storage": {
+                "samples_root": str(self._settings.samples_root.resolve()),
+            },
+        }
+
+    async def submit_browser_chunk(
+        self,
+        session_id: str,
+        audio_bytes: bytes,
+    ) -> dict[str, int | str]:
+        runtime = self._require_runtime(session_id)
+        if self._effective_recorder_backend != "browser":
+            raise RuntimeError("Browser chunk upload is only available with recorder backend 'browser'.")
+        if not audio_bytes:
+            raise RuntimeError("Uploaded browser audio chunk is empty.")
+        if runtime.stop_event.is_set():
+            raise RuntimeError("Session is stopping; browser audio uploads are no longer accepted.")
+
+        async with runtime.chunk_lock:
+            runtime.next_chunk_index += 1
+            chunk_index = runtime.next_chunk_index
+            audio_path = runtime.raw_dir / f"{self._settings.mock_chunk_prefix}_{chunk_index:04d}.wav"
+            start_time = time.perf_counter()
+            audio_path.write_bytes(audio_bytes)
+            audio_info = await asyncio.to_thread(get_wav_audio_info, audio_path)
+            if audio_info.duration_seconds <= 0:
+                raise RuntimeError("Uploaded browser audio chunk has zero duration.")
+            await self._process_chunk(runtime, audio_path, audio_info, chunk_index, start_time)
+
+        return {
+            "session_id": session_id,
+            "chunk_index": chunk_index,
+            "chunk_count": len(runtime.chunks),
+            "word_count": self._manager.require(session_id).word_count,
+        }
+
     async def _record_session(self, runtime: SessionRuntime) -> None:
         try:
             # max_chunks_per_session <= 0 means "unbounded": the session keeps
@@ -284,27 +368,7 @@ class SessionService:
                 )
                 if audio_info.duration_seconds <= 0:
                     break
-                words = await asyncio.to_thread(
-                    self._transcriber.transcribe,
-                    audio_path,
-                    chunk_index=chunk_index,
-                )
-                raw_word_count = len(words)
-                if self._settings.enable_vad:
-                    words = self._vad.filter_words(words, audio_path)
-                processing_latency = max(0.0, time.perf_counter() - start_time)
-                self._chunk_processing_latencies.append(processing_latency)
-                chunk = ChunkRecord(
-                    index=chunk_index,
-                    audio_path=audio_path,
-                    duration_seconds=audio_info.duration_seconds,
-                    processing_latency_seconds=processing_latency,
-                    raw_word_count=raw_word_count,
-                    words=words,
-                )
-                runtime.chunks.append(chunk)
-                self._export_word_samples(runtime, chunk)
-                self._write_artifacts(runtime)
+                await self._process_chunk(runtime, audio_path, audio_info, chunk_index, start_time)
                 await asyncio.sleep(self._settings.session_poll_interval_seconds)
 
             self._write_artifacts(runtime)
@@ -342,6 +406,50 @@ class SessionService:
         runtime.chunks.clear()
         runtime.stop_event = asyncio.Event()
         runtime.task = None
+        runtime.finalize_task = None
+        runtime.next_chunk_index = 0
+
+    async def _finalize_stop(self, runtime: SessionRuntime) -> None:
+        if runtime.task is not None:
+            try:
+                await runtime.task
+            except asyncio.CancelledError:
+                logger.warning("Session task was cancelled before stop: %s", runtime.session_id)
+        self._manager.set_processing(runtime.session_id, event="finalizing", release_active=True)
+        if self._settings.enable_refinement:
+            await asyncio.to_thread(self._refine_runtime_words, runtime)
+        self._write_artifacts(runtime)
+        self._manager.stop(runtime.session_id)
+
+    async def _process_chunk(
+        self,
+        runtime: SessionRuntime,
+        audio_path: Path,
+        audio_info: ChunkAudioInfo,
+        chunk_index: int,
+        start_time: float,
+    ) -> None:
+        words = await asyncio.to_thread(
+            self._transcriber.transcribe,
+            audio_path,
+            chunk_index=chunk_index,
+        )
+        raw_word_count = len(words)
+        if self._settings.enable_vad:
+            words = self._vad.filter_words(words, audio_path)
+        processing_latency = max(0.0, time.perf_counter() - start_time)
+        self._chunk_processing_latencies.append(processing_latency)
+        chunk = ChunkRecord(
+            index=chunk_index,
+            audio_path=audio_path,
+            duration_seconds=audio_info.duration_seconds,
+            processing_latency_seconds=processing_latency,
+            raw_word_count=raw_word_count,
+            words=words,
+        )
+        runtime.chunks.append(chunk)
+        self._export_word_samples(runtime, chunk)
+        self._write_artifacts(runtime)
 
     def _export_word_samples(self, runtime: SessionRuntime, chunk: ChunkRecord) -> None:
         for word_index, word in enumerate(chunk.words, start=1):
@@ -549,6 +657,19 @@ class SessionService:
             return
         logger.error(
             "Session task failed for %s",
+            runtime.session_id,
+            exc_info=(type(exception), exception, exception.__traceback__),
+        )
+        self._manager.fail(runtime.session_id, str(exception))
+
+    def _handle_finalize_task_done(self, runtime: SessionRuntime, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exception = task.exception()
+        if exception is None:
+            return
+        logger.error(
+            "Session finalize task failed for %s",
             runtime.session_id,
             exc_info=(type(exception), exception, exception.__traceback__),
         )

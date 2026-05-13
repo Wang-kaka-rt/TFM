@@ -20,11 +20,16 @@ def control_panel_script(default_session_id: str) -> str:
     baseUrl: (params.get("svBase") || window.location.origin).replace(/\\/$/, ""),
     busy: false,
     isRecording: false,
+    isUploading: false,
     isProcessing: false,
+    runtimeDiagnostics: null,
     visualizer: null,
+    browserRecorder: null,
+    browserUploadChain: Promise.resolve(),
     recordingStartedAt: 0,
     recordingTimerId: 0,
     previewPollId: 0,
+    stopPollId: 0,
     previewWords: [],
   }};
 
@@ -310,6 +315,30 @@ def control_panel_script(default_session_id: str) -> str:
     cursor: "pointer",
   }});
 
+  const runtimeLabel = document.createElement("label");
+  runtimeLabel.textContent = "Estado de audio";
+  Object.assign(runtimeLabel.style, {{
+    display: "block",
+    fontSize: "12px",
+    color: "#374151",
+    marginBottom: "6px",
+  }});
+
+  const runtimeInfo = document.createElement("div");
+  runtimeInfo.textContent = "Comprobando audio...";
+  Object.assign(runtimeInfo.style, {{
+    fontSize: "11px",
+    lineHeight: "1.5",
+    color: "#374151",
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    borderRadius: "8px",
+    padding: "8px 10px",
+    marginBottom: "12px",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  }});
+
   const processingCard = document.createElement("div");
   Object.assign(processingCard.style, {{
     minHeight: "238px",
@@ -390,6 +419,10 @@ def control_panel_script(default_session_id: str) -> str:
       const emptyState = document.createElement("div");
       emptyState.textContent = state.isRecording
         ? "Aun no hay palabras listas en este bloque."
+        : state.isUploading
+          ? "Subiendo el ultimo bloque de audio. Espera un momento."
+        : state.isProcessing
+          ? "Procesando en segundo plano. Las palabras apareceran en cuanto terminen de convertirse."
         : "Todavia no hay palabras convertidas.";
       Object.assign(emptyState.style, {{
         gridColumn: "1 / -1",
@@ -578,6 +611,116 @@ def control_panel_script(default_session_id: str) -> str:
     status.style.color = isError ? "#b91c1c" : "#374151";
   }};
 
+  const formatRuntimeErrorMessage = async (response) => {{
+    const text = await response.text();
+    if (!text.trim()) {{
+      return `HTTP ${{response.status}}`;
+    }}
+    try {{
+      const payload = JSON.parse(text);
+      if (typeof payload?.detail === "string" && payload.detail.trim()) {{
+        return payload.detail.trim();
+      }}
+      if (typeof payload?.message === "string" && payload.message.trim()) {{
+        return payload.message.trim();
+      }}
+      return JSON.stringify(payload);
+    }} catch (_error) {{
+      return text.trim() || `HTTP ${{response.status}}`;
+    }}
+  }};
+
+  const renderRuntimeInfo = (payload) => {{
+    if (!payload) {{
+      runtimeInfo.textContent = "No hay diagnostico disponible";
+      runtimeInfo.style.color = "#374151";
+      runtimeInfo.style.background = "#f9fafb";
+      runtimeInfo.style.borderColor = "#e5e7eb";
+      return;
+    }}
+
+    const recorder = payload.recorder || {{}};
+    const transcriber = payload.transcriber || {{}};
+    const audio = payload.audio || null;
+    const lines = [];
+    const recorderReady = !!recorder.ready;
+    const transcriberReady = !!transcriber.ready;
+
+    lines.push(
+      `Grabacion: ${{recorderReady ? "lista" : "no disponible"}} ` +
+      `(${{recorder.configured_backend || "desconocido"}} -> ${{recorder.effective_backend || "desconocido"}})`,
+    );
+    if (recorder.effective_backend === "browser") {{
+      lines.push("Captura de microfono: navegador/webview");
+    }}
+    if (audio) {{
+      const selectedDevice = audio.selected_input_device?.name || "sin dispositivo";
+      const defaultDevice = audio.default_input_device?.name || "sin predeterminado";
+      const selectedSource = audio.selected_input_device_source || "unknown";
+      lines.push(`Entradas detectadas: ${{audio.input_device_count ?? 0}}`);
+      lines.push(`Microfono seleccionado: ${{selectedDevice}}`);
+      lines.push(`Origen de seleccion: ${{selectedSource}}`);
+      lines.push(`Microfono predeterminado: ${{defaultDevice}}`);
+    }}
+    if (recorder.init_error) {{
+      lines.push(`Error de grabacion: ${{recorder.init_error}}`);
+    }}
+    lines.push(
+      `Reconocimiento: ${{transcriberReady ? "listo" : "no disponible"}} ` +
+      `(${{transcriber.configured_backend || "desconocido"}} -> ${{transcriber.effective_backend || "desconocido"}})`,
+    );
+    if (transcriber.init_error) {{
+      lines.push(`Error de reconocimiento: ${{transcriber.init_error}}`);
+    }}
+
+    runtimeInfo.textContent = lines.join("\\n");
+    const hasError = !recorderReady || !transcriberReady;
+    runtimeInfo.style.color = hasError ? "#991b1b" : "#166534";
+    runtimeInfo.style.background = hasError ? "#fef2f2" : "#f0fdf4";
+    runtimeInfo.style.borderColor = hasError ? "#fecaca" : "#bbf7d0";
+  }};
+
+  const updateRuntimeInfo = async () => {{
+    try {{
+      const response = await fetch(`${{state.baseUrl}}/runtime`);
+      if (!response.ok) {{
+        throw new Error(await formatRuntimeErrorMessage(response));
+      }}
+      state.runtimeDiagnostics = await response.json();
+      const sessionId = normalizeSessionId();
+      if (sessionId) {{
+        try {{
+          const session = await fetchSessionStatus(sessionId);
+          if (session?.state === "processing") {{
+            state.isRecording = false;
+            if (!state.isUploading) {{
+              state.isProcessing = true;
+            }}
+            if (!state.stopPollId) {{
+              startStopPolling(sessionId);
+            }}
+          }} else if (session?.state === "stopped" || session?.state === "failed") {{
+            state.isUploading = false;
+            state.isProcessing = false;
+            stopStopPolling();
+          }}
+          refreshControls();
+        }} catch (_statusError) {{
+          // Runtime diagnostics should still render even if session status lookup fails.
+        }}
+      }}
+      renderRuntimeInfo(state.runtimeDiagnostics);
+      return state.runtimeDiagnostics;
+    }} catch (error) {{
+      state.runtimeDiagnostics = null;
+      runtimeInfo.textContent = `No se pudo cargar el diagnostico: ${{String(error)}}`;
+      runtimeInfo.style.color = "#991b1b";
+      runtimeInfo.style.background = "#fef2f2";
+      runtimeInfo.style.borderColor = "#fecaca";
+      return null;
+    }}
+  }};
+
   const formatElapsed = (elapsedMs) => {{
     const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
     const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
@@ -622,6 +765,112 @@ def control_panel_script(default_session_id: str) -> str:
       window.clearInterval(state.previewPollId);
       state.previewPollId = 0;
     }}
+  }};
+
+  const stopStopPolling = () => {{
+    if (state.stopPollId) {{
+      window.clearInterval(state.stopPollId);
+      state.stopPollId = 0;
+    }}
+  }};
+
+  const concatenateFloat32Buffers = (buffers) => {{
+    let totalLength = 0;
+    buffers.forEach((buffer) => {{
+      totalLength += buffer.length;
+    }});
+    const merged = new Float32Array(totalLength);
+    let offset = 0;
+    buffers.forEach((buffer) => {{
+      merged.set(buffer, offset);
+      offset += buffer.length;
+    }});
+    return merged;
+  }};
+
+  const encodeWavBlob = (buffers, sampleRate) => {{
+    const samples = concatenateFloat32Buffers(buffers);
+    const bytesPerSample = 2;
+    const blockAlign = bytesPerSample;
+    const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample);
+    const view = new DataView(buffer);
+    const writeString = (offset, value) => {{
+      for (let index = 0; index < value.length; index += 1) {{
+        view.setUint8(offset + index, value.charCodeAt(index));
+      }}
+    }};
+
+    writeString(0, "RIFF");
+    view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, samples.length * bytesPerSample, true);
+
+    let offset = 44;
+    for (let index = 0; index < samples.length; index += 1) {{
+      const clamped = Math.max(-1, Math.min(1, samples[index]));
+      const pcm = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+      view.setInt16(offset, pcm, true);
+      offset += bytesPerSample;
+    }}
+
+    return new Blob([buffer], {{ type: "audio/wav" }});
+  }};
+
+  const uploadBrowserChunk = async (blob) => {{
+    const sessionId = normalizeSessionId();
+    const response = await fetch(
+      `${{state.baseUrl}}/browser/chunk?session_id=${{encodeURIComponent(sessionId)}}`,
+      {{
+        method: "POST",
+        headers: {{ "Content-Type": "audio/wav" }},
+        body: blob,
+      }},
+    );
+    if (!response.ok) {{
+      throw new Error(await formatRuntimeErrorMessage(response));
+    }}
+    await response.json();
+    await refreshWordPreview();
+  }};
+
+  const flushBrowserChunk = async () => {{
+    const recorder = state.browserRecorder;
+    if (!recorder) {{
+      return;
+    }}
+    if (!recorder.buffers.length) {{
+      return;
+    }}
+
+    const buffers = recorder.buffers;
+    recorder.buffers = [];
+    const blob = encodeWavBlob(buffers, recorder.sampleRate);
+    const uploadChain = state.browserUploadChain
+      .catch(() => undefined)
+      .then(() => uploadBrowserChunk(blob));
+    state.browserUploadChain = uploadChain;
+    await uploadChain;
+  }};
+
+  const queueBrowserChunkUpload = (buffers, sampleRate) => {{
+    if (!buffers.length) {{
+      return state.browserUploadChain;
+    }}
+    const blob = encodeWavBlob(buffers, sampleRate);
+    const uploadChain = state.browserUploadChain
+      .catch(() => undefined)
+      .then(() => uploadBrowserChunk(blob));
+    state.browserUploadChain = uploadChain;
+    return uploadChain;
   }};
 
   const refreshWordPreview = async () => {{
@@ -671,6 +920,47 @@ def control_panel_script(default_session_id: str) -> str:
       }}
       renderPreviewWords();
     }}
+  }};
+
+  const fetchSessionStatus = async (sessionId) => {{
+    const response = await fetch(
+      `${{state.baseUrl}}/status?session_id=${{encodeURIComponent(sessionId)}}&t=${{Date.now()}}`,
+    );
+    if (!response.ok) {{
+      throw new Error(await formatRuntimeErrorMessage(response));
+    }}
+    const payload = await response.json();
+    return payload?.sessions?.[0] || null;
+  }};
+
+  const startStopPolling = (sessionId) => {{
+    stopStopPolling();
+    state.stopPollId = window.setInterval(async () => {{
+      try {{
+        const session = await fetchSessionStatus(sessionId);
+        if (!session) {{
+          return;
+        }}
+        if (session.state === "stopped") {{
+          state.isProcessing = false;
+          stopStopPolling();
+          stopPreviewPolling();
+          await refreshWordPreview();
+          refreshControls();
+          setStatus(`Grabacion procesada: ${{sessionId}}. Ya puedes importar las muestras.`);
+          return;
+        }}
+        if (session.state === "failed") {{
+          state.isProcessing = false;
+          stopStopPolling();
+          stopPreviewPolling();
+          refreshControls();
+          setStatus(`Error al procesar en segundo plano: ${{session.last_error || "desconocido"}}`, true);
+        }}
+      }} catch (_error) {{
+        // Keep polling in background; transient errors should not block the UI.
+      }}
+    }}, 900);
   }};
 
   const startPreviewPolling = () => {{
@@ -762,6 +1052,22 @@ def control_panel_script(default_session_id: str) -> str:
       // Ignore disconnect failures during cleanup.
     }}
 
+    if (activeVisualizer.captureProcessor) {{
+      try {{
+        activeVisualizer.captureProcessor.disconnect();
+      }} catch (_error) {{
+        // Ignore disconnect failures during cleanup.
+      }}
+    }}
+
+    if (activeVisualizer.captureGain) {{
+      try {{
+        activeVisualizer.captureGain.disconnect();
+      }} catch (_error) {{
+        // Ignore disconnect failures during cleanup.
+      }}
+    }}
+
     activeVisualizer.stream.getTracks().forEach((track) => track.stop());
 
     if (activeVisualizer.audioContext && activeVisualizer.audioContext.state !== "closed") {{
@@ -827,13 +1133,83 @@ def control_panel_script(default_session_id: str) -> str:
     render();
   }};
 
+  const startBrowserRecorder = async () => {{
+    if (!state.visualizer) {{
+      throw new Error("La captura del navegador necesita una senal de microfono activa.");
+    }}
+    await stopBrowserRecorder({{ flushFinal: false }});
+    const chunkDurationSeconds = Number(state.runtimeDiagnostics?.recorder?.chunk_duration_seconds || 2.5);
+    const audioContext = state.visualizer.audioContext;
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const captureGain = audioContext.createGain();
+    captureGain.gain.value = 0;
+
+    processor.onaudioprocess = (event) => {{
+      if (!state.isRecording || !state.browserRecorder) {{
+        return;
+      }}
+      const input = event.inputBuffer.getChannelData(0);
+      state.browserRecorder.buffers.push(new Float32Array(input));
+    }};
+
+    state.visualizer.source.connect(processor);
+    processor.connect(captureGain);
+    captureGain.connect(audioContext.destination);
+    state.visualizer.captureProcessor = processor;
+    state.visualizer.captureGain = captureGain;
+    state.browserUploadChain = Promise.resolve();
+    state.browserRecorder = {{
+      processor,
+      captureGain,
+      sampleRate: audioContext.sampleRate || 48000,
+      buffers: [],
+      timerId: window.setInterval(() => {{
+        void flushBrowserChunk();
+      }}, Math.max(250, Math.round(chunkDurationSeconds * 1000))),
+    }};
+  }};
+
+  const stopBrowserRecorder = async (
+    {{ flushFinal, awaitUploads }} = {{ flushFinal: true, awaitUploads: true }},
+  ) => {{
+    const recorder = state.browserRecorder;
+    if (!recorder) {{
+      return;
+    }}
+    window.clearInterval(recorder.timerId);
+    recorder.processor.onaudioprocess = null;
+    try {{
+      recorder.processor.disconnect();
+    }} catch (_error) {{
+      // Ignore disconnect failures during recorder cleanup.
+    }}
+    try {{
+      recorder.captureGain.disconnect();
+    }} catch (_error) {{
+      // Ignore disconnect failures during recorder cleanup.
+    }}
+    if (state.visualizer?.captureProcessor === recorder.processor) {{
+      state.visualizer.captureProcessor = null;
+    }}
+    if (state.visualizer?.captureGain === recorder.captureGain) {{
+      state.visualizer.captureGain = null;
+    }}
+    const pendingBuffers = flushFinal ? recorder.buffers : [];
+    recorder.buffers = [];
+    state.browserRecorder = null;
+    const uploadPromise = queueBrowserChunkUpload(pendingBuffers, recorder.sampleRate);
+    if (awaitUploads) {{
+      await uploadPromise;
+    }}
+  }};
+
   const refreshControls = () => {{
     sessionInput.disabled = state.busy || state.isRecording;
-    modeSelect.disabled = state.busy || state.isRecording || state.isProcessing;
-    openStorageButton.disabled = state.busy || state.isRecording || state.isProcessing;
-    startButton.disabled = state.busy || state.isRecording || state.isProcessing;
-    stopButton.disabled = state.busy || !state.isRecording || state.isProcessing;
-    importButton.disabled = state.busy || state.isRecording || state.isProcessing;
+    modeSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
+    openStorageButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
+    startButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
+    stopButton.disabled = state.busy || !state.isRecording || state.isUploading || state.isProcessing;
+    importButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     closeButton.disabled = state.busy;
     openButton.disabled = state.busy;
 
@@ -861,17 +1237,24 @@ def control_panel_script(default_session_id: str) -> str:
     recordingTimer.style.color = state.isRecording ? "#b91c1c" : "#374151";
     visualizerCard.style.opacity = state.isRecording ? "1" : "0.65";
 
-    processingCard.style.background = state.isProcessing ? "#eff6ff" : "#f9fafb";
-    processingCard.style.borderColor = state.isProcessing ? "#bfdbfe" : "#e5e7eb";
-    processingSpinner.style.display = state.isProcessing ? "block" : "none";
-    processingTitle.textContent = state.isProcessing ? "Procesando voz" : "Palabras detectadas";
-    processingTitle.style.color = state.isProcessing ? "#1d4ed8" : "#374151";
+    const showProgressSpinner = state.isUploading || state.isProcessing;
+    processingCard.style.background = showProgressSpinner ? "#eff6ff" : "#f9fafb";
+    processingCard.style.borderColor = showProgressSpinner ? "#bfdbfe" : "#e5e7eb";
+    processingSpinner.style.display = showProgressSpinner ? "block" : "none";
+    processingTitle.textContent = state.isUploading
+      ? "Subiendo audio"
+      : state.isProcessing
+        ? "Procesando audio"
+        : "Palabras detectadas";
+    processingTitle.style.color = showProgressSpinner ? "#1d4ed8" : "#374151";
     processingHint.textContent = state.isRecording
       ? "Cada bloque convertido va anadiendo palabras aqui en tiempo real."
+      : state.isUploading
+        ? "El ultimo bloque de audio se esta enviando al backend."
       : state.isProcessing
         ? "Terminando de cortar el audio y actualizando las palabras detectadas."
         : "Mientras grabas, aqui apareceran las palabras que ya se hayan convertido.";
-    processingHint.style.color = state.isProcessing ? "#1e40af" : "#6b7280";
+    processingHint.style.color = showProgressSpinner ? "#1e40af" : "#6b7280";
     renderPreviewWords();
   }};
 
@@ -917,7 +1300,7 @@ def control_panel_script(default_session_id: str) -> str:
       body: JSON.stringify(body),
     }});
     if (!response.ok) {{
-      throw new Error(`${{response.status}} ${{await response.text()}}`);
+      throw new Error(await formatRuntimeErrorMessage(response));
     }}
     return response.json();
   }};
@@ -938,54 +1321,109 @@ def control_panel_script(default_session_id: str) -> str:
   }});
 
   startButton.addEventListener("click", async () => {{
+    let sessionStarted = false;
+    let controlsReleased = false;
     try {{
       const sessionId = normalizeSessionId();
       setBusy(true);
+      const runtime = await updateRuntimeInfo();
+      const recorderBackend = runtime?.recorder?.effective_backend || runtime?.recorder?.configured_backend;
+      if (runtime?.recorder && !runtime.recorder.ready) {{
+        throw new Error(runtime.recorder.init_error || "El microfono no esta disponible en este equipo.");
+      }}
+      if (runtime?.transcriber && !runtime.transcriber.ready) {{
+        throw new Error(runtime.transcriber.init_error || "El reconocimiento de voz no esta disponible.");
+      }}
+      if (recorderBackend === "browser") {{
+        await startVisualizer();
+      }}
+      state.isUploading = false;
       state.isProcessing = false;
       state.previewWords = [];
       renderPreviewWords();
       setStatus("Iniciando grabacion...");
       await requestJson("/start", {{ session_id: sessionId }});
+      sessionStarted = true;
       state.isRecording = true;
       startRecordingClock();
       startPreviewPolling();
-      refreshControls();
-      try {{
-        await startVisualizer();
-        setStatus(`Grabacion iniciada: ${{sessionId}}. Habla ahora para ver la senal.`);
-      }} catch (_visualizerError) {{
-        setStatus(`Grabacion iniciada: ${{sessionId}}. La vista del microfono no esta disponible en esta ventana.`);
+      setBusy(false);
+      controlsReleased = true;
+      if (recorderBackend === "browser") {{
+        await startBrowserRecorder();
+        setStatus(`Grabacion iniciada: ${{sessionId}}. El navegador captura y envia el audio.`);
+      }} else {{
+        try {{
+          await startVisualizer();
+          setStatus(`Grabacion iniciada: ${{sessionId}}. Habla ahora para ver la senal.`);
+        }} catch (_visualizerError) {{
+          setStatus(`Grabacion iniciada: ${{sessionId}}. La vista del microfono no esta disponible en esta ventana.`);
+        }}
       }}
     }} catch (error) {{
+      try {{
+        await stopBrowserRecorder({{ flushFinal: false, awaitUploads: false }});
+      }} catch (_browserStopError) {{
+        // Ignore cleanup errors after a failed start.
+      }}
+      await stopVisualizer();
+      if (sessionStarted) {{
+        try {{
+          await requestJson("/stop", {{ session_id: state.sessionId }});
+        }} catch (_stopAfterStartError) {{
+          // Ignore stop failures after a failed browser start cleanup.
+        }}
+      }}
+      state.isRecording = false;
+      state.isUploading = false;
+      state.isProcessing = false;
+      stopRecordingClock();
+      stopPreviewPolling();
+      refreshControls();
+      await updateRuntimeInfo();
       setStatus(`Error al iniciar: ${{String(error)}}`, true);
     }} finally {{
-      setBusy(false);
+      if (!controlsReleased) {{
+        setBusy(false);
+      }}
     }}
   }});
 
   stopButton.addEventListener("click", async () => {{
     try {{
       const sessionId = normalizeSessionId();
+      const recorderBackend = state.runtimeDiagnostics?.recorder?.effective_backend
+        || state.runtimeDiagnostics?.recorder?.configured_backend;
       state.isRecording = false;
-      state.isProcessing = true;
+      state.isUploading = recorderBackend === "browser";
+      state.isProcessing = recorderBackend !== "browser";
       stopRecordingClock();
+      let pendingBrowserUpload = Promise.resolve();
+      if (recorderBackend === "browser") {{
+        pendingBrowserUpload = stopBrowserRecorder({{ flushFinal: true, awaitUploads: false }});
+      }}
       await stopVisualizer();
       startPreviewPolling();
-      setBusy(true);
-      setStatus("Deteniendo la grabacion y generando muestras...");
-      await requestJson("/stop", {{ session_id: sessionId }});
-      state.isProcessing = false;
-      stopPreviewPolling();
-      await refreshWordPreview();
       refreshControls();
-      setStatus(`Grabacion detenida: ${{sessionId}}`);
+      setStatus(
+        recorderBackend === "browser"
+          ? "Grabacion detenida. Subiendo el ultimo bloque de audio..."
+          : "Grabacion detenida. Procesando en segundo plano; puedes cerrar la ventana.",
+      );
+      await pendingBrowserUpload;
+      state.isUploading = false;
+      state.isProcessing = true;
+      refreshControls();
+      setStatus("Audio subido. Procesando el audio en segundo plano; puedes cerrar la ventana.");
+      await requestJson("/stop", {{ session_id: sessionId }});
+      startStopPolling(sessionId);
     }} catch (error) {{
+      state.isUploading = false;
       state.isProcessing = false;
+      stopStopPolling();
       stopPreviewPolling();
       refreshControls();
       setStatus(`Error al detener: ${{String(error)}}`, true);
-    }} finally {{
-      setBusy(false);
     }}
   }});
 
@@ -1036,6 +1474,7 @@ def control_panel_script(default_session_id: str) -> str:
     overlay.style.display = "flex";
     setStatus("");
     updateStorageInfo();
+    void updateRuntimeInfo();
     sessionInput.focus();
     sessionInput.select();
   }});
@@ -1057,8 +1496,10 @@ def control_panel_script(default_session_id: str) -> str:
   }});
 
   window.addEventListener("beforeunload", () => {{
+    stopStopPolling();
     stopPreviewPolling();
     stopRecordingClock();
+    void stopBrowserRecorder({{ flushFinal: false, awaitUploads: false }});
     void stopVisualizer();
   }});
   window.addEventListener("resize", updatePanelLayout);
@@ -1082,6 +1523,8 @@ def control_panel_script(default_session_id: str) -> str:
     storageLabel,
     storageInfo,
     openStorageButton,
+    runtimeLabel,
+    runtimeInfo,
     processingCard,
   ]));
   contentLayout.appendChild(leftColumn);
@@ -1097,6 +1540,7 @@ def control_panel_script(default_session_id: str) -> str:
   updatePanelLayout();
   refreshControls();
   updateStorageInfo();
+  void updateRuntimeInfo();
   return "installed";
 }})();
 """

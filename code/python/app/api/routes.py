@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -244,12 +245,16 @@ def _resolve_strudel_asset(asset_path: str) -> Path | None:
     return None
 
 
+_SAFE_SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+
 @router.get("/index.html", include_in_schema=False)
 async def strudel_index(request: Request) -> Response:
     index_file = _resolve_strudel_asset("index.html")
     if index_file is None:
         raise HTTPException(status_code=404, detail="strudel index not found")
-    session_id = request.query_params.get("svSession", "demo01")
+    raw = request.query_params.get("svSession", "demo01")
+    session_id = raw if _SAFE_SESSION_ID.fullmatch(raw) else "demo01"
     html = index_file.read_text(encoding="utf-8")
     panel_js = control_panel_script(session_id)
     injection = f"\n<script>\n{panel_js}\n</script>"

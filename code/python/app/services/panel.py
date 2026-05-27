@@ -31,6 +31,10 @@ def control_panel_script(default_session_id: str) -> str:
     previewPollId: 0,
     stopPollId: 0,
     previewWords: [],
+    autoImportEnabled: false,
+    autoImportSignature: "",
+    autoImportChain: Promise.resolve(),
+    autoImportSummary: "",
   }};
 
   const styleTag = document.createElement("style");
@@ -40,61 +44,204 @@ def control_panel_script(default_session_id: str) -> str:
       70% {{ transform: scale(1.08); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }}
       100% {{ transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }}
     }}
+    @keyframes strudelVoiceRecordRipple {{
+      0% {{ box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45); }}
+      70% {{ box-shadow: 0 0 0 12px rgba(220, 38, 38, 0); }}
+      100% {{ box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }}
+    }}
     @keyframes strudelVoicePanelSpin {{
       0% {{ transform: rotate(0deg); }}
       100% {{ transform: rotate(360deg); }}
     }}
     .strudel-voice-scroll {{
       scrollbar-width: thin;
-      scrollbar-color: rgba(148, 163, 184, 0.75) transparent;
+      scrollbar-color: rgba(100, 116, 139, 0.55) transparent;
     }}
     .strudel-voice-scroll::-webkit-scrollbar {{
-      width: 8px;
+      width: 6px;
+      height: 6px;
     }}
     .strudel-voice-scroll::-webkit-scrollbar-track {{
       background: transparent;
     }}
     .strudel-voice-scroll::-webkit-scrollbar-thumb {{
-      background: linear-gradient(180deg, rgba(191, 219, 254, 0.95), rgba(148, 163, 184, 0.9));
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.38), rgba(100, 116, 139, 0.52));
       border-radius: 999px;
-      border: 2px solid transparent;
+      border: 1px solid transparent;
       background-clip: padding-box;
     }}
     .strudel-voice-scroll::-webkit-scrollbar-thumb:hover {{
-      background: linear-gradient(180deg, rgba(96, 165, 250, 0.95), rgba(100, 116, 139, 0.95));
+      background: linear-gradient(180deg, rgba(96, 165, 250, 0.62), rgba(71, 85, 105, 0.72));
       border-radius: 999px;
-      border: 2px solid transparent;
+      border: 1px solid transparent;
       background-clip: padding-box;
+    }}
+    .strudel-voice-scroll-hidden {{
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }}
+    .strudel-voice-scroll-hidden::-webkit-scrollbar {{
+      width: 0;
+      height: 0;
+      display: none;
     }}
   `;
   document.head.appendChild(styleTag);
 
   const openButton = document.createElement("button");
   openButton.textContent = "Voice";
+  openButton.type = "button";
   Object.assign(openButton.style, {{
-    position: "fixed",
-    right: "16px",
-    bottom: "16px",
-    zIndex: "99999",
+    display: "none",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "32px",
+    margin: "0",
     border: "0",
-    borderRadius: "999px",
-    padding: "10px 14px",
-    background: "#111827",
-    color: "#ffffff",
+    borderBottom: "2px solid transparent",
+    borderRadius: "0",
+    padding: "0 8px",
+    background: "transparent",
+    color: "#d1d5db",
     cursor: "pointer",
-    fontSize: "13px",
-    fontWeight: "700",
-    transition: "background 120ms ease, box-shadow 120ms ease, opacity 120ms ease",
-    boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
+    fontSize: "12px",
+    fontWeight: "400",
+    lineHeight: "32px",
+    whiteSpace: "nowrap",
+    transition: "opacity 120ms ease, color 120ms ease, border-color 120ms ease",
+    boxShadow: "none",
+    textTransform: "lowercase",
   }});
 
+  const bottomRecordBar = document.createElement("div");
+  Object.assign(bottomRecordBar.style, {{
+    display: "none",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    padding: "10px 12px",
+    borderTop: "1px solid #374151",
+    background: "#111111",
+    color: "#ffffff",
+    flexShrink: "0",
+  }});
+
+  const bottomRecordMeta = document.createElement("div");
+  Object.assign(bottomRecordMeta.style, {{
+    minWidth: "0",
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    flex: "1 1 auto",
+  }});
+
+  const bottomBankLabel = document.createElement("label");
+  bottomBankLabel.textContent = "BankName";
+  Object.assign(bottomBankLabel.style, {{
+    fontSize: "11px",
+    fontWeight: "700",
+    color: "#cbd5e1",
+    letterSpacing: "0.03em",
+    textTransform: "uppercase",
+  }});
+
+  const bottomBankInput = document.createElement("input");
+  bottomBankInput.type = "text";
+  Object.assign(bottomBankInput.style, {{
+    width: "100%",
+    minWidth: "0",
+    height: "34px",
+    padding: "0 10px",
+    borderRadius: "8px",
+    border: "1px solid #475569",
+    background: "#0f172a",
+    color: "#f8fafc",
+    boxSizing: "border-box",
+    fontSize: "14px",
+  }});
+
+  const bottomRecordButton = document.createElement("button");
+  bottomRecordButton.type = "button";
+  bottomRecordButton.title = "Iniciar grabacion";
+  Object.assign(bottomRecordButton.style, {{
+    width: "28px",
+    height: "28px",
+    borderRadius: "999px",
+    border: "2px solid rgba(255, 255, 255, 0.95)",
+    background: "#2563eb",
+    cursor: "pointer",
+    flexShrink: "0",
+    transition: "background 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease",
+    boxShadow: "0 0 0 0 rgba(37, 99, 235, 0.28)",
+  }});
+
+  const bottomRecordButtonWrap = document.createElement("div");
+  Object.assign(bottomRecordButtonWrap.style, {{
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "6px",
+    flexShrink: "0",
+  }});
+
+  const bottomRecordSpacer = document.createElement("div");
+  Object.assign(bottomRecordSpacer.style, {{
+    height: "14px",
+    width: "100%",
+  }});
+
+  const bottomModeWrap = document.createElement("div");
+  Object.assign(bottomModeWrap.style, {{
+    minWidth: "160px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    flexShrink: "0",
+  }});
+
+  const bottomModeLabel = document.createElement("label");
+  bottomModeLabel.textContent = "Modo";
+  Object.assign(bottomModeLabel.style, {{
+    fontSize: "11px",
+    fontWeight: "700",
+    color: "#cbd5e1",
+    letterSpacing: "0.03em",
+  }});
+
+  const bottomModeSelect = document.createElement("select");
+  Object.assign(bottomModeSelect.style, {{
+    width: "160px",
+    height: "34px",
+    padding: "0 10px",
+    borderRadius: "8px",
+    border: "1px solid #475569",
+    background: "#0f172a",
+    color: "#f8fafc",
+    boxSizing: "border-box",
+    fontSize: "14px",
+  }});
+
+  bottomRecordMeta.appendChild(bottomBankLabel);
+  bottomRecordMeta.appendChild(bottomBankInput);
+  bottomModeWrap.appendChild(bottomModeLabel);
+  bottomModeWrap.appendChild(bottomModeSelect);
+  bottomRecordButtonWrap.appendChild(bottomRecordSpacer);
+  bottomRecordButtonWrap.appendChild(bottomRecordButton);
+  bottomRecordBar.appendChild(bottomRecordMeta);
+  bottomRecordBar.appendChild(bottomRecordButtonWrap);
+  bottomRecordBar.appendChild(bottomModeWrap);
+
   const overlay = document.createElement("div");
+  overlay.className = "strudel-voice-scroll-hidden";
   Object.assign(overlay.style, {{
     position: "fixed",
     inset: "0",
     display: "none",
     alignItems: "center",
     justifyContent: "center",
+    padding: "12px",
+    boxSizing: "border-box",
+    overflowY: "auto",
     zIndex: "100000",
     background: "rgba(17, 24, 39, 0.45)",
   }});
@@ -103,11 +250,16 @@ def control_panel_script(default_session_id: str) -> str:
   Object.assign(panel.style, {{
     width: "720px",
     maxWidth: "calc(100vw - 32px)",
+    maxHeight: "calc(100vh - 24px)",
     background: "#ffffff",
     borderRadius: "12px",
     boxShadow: "0 10px 30px rgba(0, 0, 0, 0.25)",
     padding: "16px",
     fontFamily: "system-ui, sans-serif",
+    boxSizing: "border-box",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
   }});
 
   const title = document.createElement("div");
@@ -116,24 +268,33 @@ def control_panel_script(default_session_id: str) -> str:
     fontSize: "16px",
     fontWeight: "700",
     marginBottom: "10px",
+    flexShrink: "0",
   }});
 
   const contentLayout = document.createElement("div");
+  contentLayout.className = "strudel-voice-scroll-hidden";
   Object.assign(contentLayout.style, {{
     display: "grid",
     gridTemplateColumns: "minmax(0, 1.05fr) minmax(0, 0.95fr)",
     gap: "14px",
     alignItems: "start",
+    minHeight: "0",
+    overflowY: "auto",
+    overflowX: "hidden",
   }});
 
   const leftColumn = document.createElement("div");
   Object.assign(leftColumn.style, {{
     minWidth: "0",
+    display: "flex",
+    flexDirection: "column",
   }});
 
   const rightColumn = document.createElement("div");
   Object.assign(rightColumn.style, {{
     minWidth: "0",
+    display: "flex",
+    flexDirection: "column",
   }});
 
   const recordingState = document.createElement("div");
@@ -252,7 +413,7 @@ def control_panel_script(default_session_id: str) -> str:
   recordingState.appendChild(levelMeterWrap);
 
   const inputLabel = document.createElement("label");
-  inputLabel.textContent = "ID de sesion";
+  inputLabel.textContent = "BankName";
   Object.assign(inputLabel.style, {{
     display: "block",
     fontSize: "12px",
@@ -276,6 +437,7 @@ def control_panel_script(default_session_id: str) -> str:
     fontSize: "16px",
     lineHeight: "22px",
   }});
+  bottomBankInput.value = state.sessionId;
 
   const storageLabel = document.createElement("label");
   storageLabel.textContent = "Ubicacion de guardado";
@@ -384,6 +546,7 @@ def control_panel_script(default_session_id: str) -> str:
     lineHeight: "1.5",
     color: "#6b7280",
     maxWidth: "260px",
+    alignSelf: "center",
   }});
 
   const processingWords = document.createElement("div");
@@ -499,6 +662,7 @@ def control_panel_script(default_session_id: str) -> str:
     option.style.color = "#111827";
     option.style.backgroundColor = "#ffffff";
     modeSelect.appendChild(option);
+    bottomModeSelect.appendChild(option.cloneNode(true));
   }});
 
   const actions = document.createElement("div");
@@ -525,7 +689,49 @@ def control_panel_script(default_session_id: str) -> str:
 
   const startButton = makeActionButton("Iniciar", "#16a34a", "#16a34a");
   const stopButton = makeActionButton("Detener", "#dc2626", "#dc2626");
-  const importButton = makeActionButton("Importar", "#2563eb", "#2563eb");
+  const importButton = makeActionButton("Importacion auto", "#2563eb", "#2563eb");
+  importButton.title = "Estado de importacion automatica";
+
+  const autoImportStatusCard = document.createElement("div");
+  Object.assign(autoImportStatusCard.style, {{
+    marginTop: "8px",
+    padding: "10px 12px",
+    borderRadius: "10px",
+    border: "1px solid #dbeafe",
+    background: "#eff6ff",
+  }});
+
+  const autoImportStatusTitle = document.createElement("div");
+  autoImportStatusTitle.textContent = "Importacion automatica";
+  Object.assign(autoImportStatusTitle.style, {{
+    fontSize: "11px",
+    fontWeight: "700",
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: "#1d4ed8",
+  }});
+
+  const autoImportStatusText = document.createElement("div");
+  autoImportStatusText.textContent = "Esperando nuevas conversiones";
+  Object.assign(autoImportStatusText.style, {{
+    marginTop: "6px",
+    fontSize: "13px",
+    fontWeight: "700",
+    color: "#1e3a8a",
+  }});
+
+  const autoImportStatusHint = document.createElement("div");
+  autoImportStatusHint.textContent = "Pulsa grabar para empezar a importar automaticamente.";
+  Object.assign(autoImportStatusHint.style, {{
+    marginTop: "4px",
+    fontSize: "12px",
+    lineHeight: "1.45",
+    color: "#475569",
+  }});
+
+  autoImportStatusCard.appendChild(autoImportStatusTitle);
+  autoImportStatusCard.appendChild(autoImportStatusText);
+  autoImportStatusCard.appendChild(autoImportStatusHint);
 
   const closeButton = document.createElement("button");
   closeButton.textContent = "Cerrar";
@@ -600,10 +806,29 @@ def control_panel_script(default_session_id: str) -> str:
   const normalizeSessionId = () => {{
     const candidate = sessionInput.value.trim();
     if (!candidate) {{
-      throw new Error("El ID de sesion no puede estar vacio");
+      throw new Error("BankName no puede estar vacio");
     }}
     state.sessionId = candidate;
     return candidate;
+  }};
+
+  const syncSessionNameInputs = (value, source = null) => {{
+    state.sessionId = value;
+    if (source !== sessionInput) {{
+      sessionInput.value = value;
+    }}
+    if (source !== bottomBankInput) {{
+      bottomBankInput.value = value;
+    }}
+  }};
+
+  const syncModeInputs = (value, source = null) => {{
+    if (source !== modeSelect) {{
+      modeSelect.value = value;
+    }}
+    if (source !== bottomModeSelect) {{
+      bottomModeSelect.value = value;
+    }}
   }};
 
   const setStatus = (message, isError = false) => {{
@@ -825,6 +1050,111 @@ def control_panel_script(default_session_id: str) -> str:
     return new Blob([buffer], {{ type: "audio/wav" }});
   }};
 
+  const fetchManifest = async (sessionId, cacheBust = true) => {{
+    const suffix = cacheBust ? `?t=${{Date.now()}}` : "";
+    const response = await fetch(
+      `${{state.baseUrl}}/samples/${{encodeURIComponent(sessionId)}}/manifest${{suffix}}`,
+    );
+    if (!response.ok) {{
+      if (response.status === 404) {{
+        return null;
+      }}
+      throw new Error(await formatRuntimeErrorMessage(response));
+    }}
+    return response.json();
+  }};
+
+  const buildSampleMap = (items) => {{
+    const sampleMap = {{}};
+    for (const item of items) {{
+      const key = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
+      if (!sampleMap[key]) {{
+        sampleMap[key] = [];
+      }}
+      sampleMap[key].push(item.url);
+    }}
+    return sampleMap;
+  }};
+
+  const createImportSignature = (sessionId, mode, sampleMap) => {{
+    const entries = Object.entries(sampleMap)
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, {{ sensitivity: "base" }}))
+      .map(([key, urls]) => `${{key}}:${{urls.join("|")}}`);
+    return `${{sessionId}}::${{mode}}::${{entries.join("||")}}`;
+  }};
+
+  const importSamplesIntoStrudel = async ({{ manifest = null, manual = false, force = false }} = {{}}) => {{
+    const sessionId = sessionInput.value.trim();
+    if (!sessionId) {{
+      if (manual) {{
+        throw new Error("BankName no puede estar vacio");
+      }}
+      state.autoImportSignature = "";
+      state.autoImportSummary = "";
+      return false;
+    }}
+
+    const selectedMode = modeSelect.value;
+    const resolvedManifest = manifest || await fetchManifest(sessionId, !manual);
+    if (!resolvedManifest) {{
+      if (manual) {{
+        throw new Error("Todavia no hay muestras disponibles para importar.");
+      }}
+      state.autoImportSignature = "";
+      state.autoImportSummary = "";
+      return false;
+    }}
+
+    const items = Array.isArray(resolvedManifest?.[selectedMode]) ? resolvedManifest[selectedMode] : [];
+    if (!items.length) {{
+      if (manual) {{
+        throw new Error("No hay muestras disponibles. Graba primero y luego detén la sesion.");
+      }}
+      state.autoImportSignature = "";
+      state.autoImportSummary = "";
+      return false;
+    }}
+
+    const sampleMap = buildSampleMap(items);
+    const signature = createImportSignature(sessionId, selectedMode, sampleMap);
+    if (!force && state.autoImportSignature === signature) {{
+      return false;
+    }}
+
+    const strudelSamples = window.strudelSamples;
+    if (typeof strudelSamples !== "function") {{
+      throw new Error("Strudel aun no esta listo. Espera a que cargue completamente.");
+    }}
+    await strudelSamples(sampleMap);
+    state.autoImportSignature = signature;
+
+    const count = Object.keys(sampleMap).length;
+    const label = modeSelect.options[modeSelect.selectedIndex].text;
+    state.autoImportSummary = `${{count}} grupos de ${{label}} listos en Strudel.`;
+    if (manual) {{
+      setStatus(`${{count}} muestras de ${{label}} listas. Usa s('nombre') en el editor.`);
+    }} else if (state.autoImportEnabled) {{
+      setStatus(`Importacion automatica completada: ${{count}} grupos de ${{label}}.`);
+    }}
+    return true;
+  }};
+
+  const queueAutoImport = (options = {{}}) => {{
+    if (!state.autoImportEnabled) {{
+      return state.autoImportChain;
+    }}
+    state.autoImportChain = state.autoImportChain
+      .catch(() => undefined)
+      .then(async () => {{
+        try {{
+          await importSamplesIntoStrudel(options);
+        }} catch (error) {{
+          setStatus(`Error en la importacion automatica: ${{String(error)}}`, true);
+        }}
+      }});
+    return state.autoImportChain;
+  }};
+
   const uploadBrowserChunk = async (blob) => {{
     const sessionId = normalizeSessionId();
     const response = await fetch(
@@ -877,24 +1207,21 @@ def control_panel_script(default_session_id: str) -> str:
     const sessionId = sessionInput.value.trim();
     if (!sessionId) {{
       state.previewWords = [];
+      state.autoImportSignature = "";
+      state.autoImportSummary = "";
       renderPreviewWords();
       return;
     }}
 
     try {{
-      const response = await fetch(
-        `${{state.baseUrl}}/samples/${{encodeURIComponent(sessionId)}}/manifest?t=${{Date.now()}}`,
-      );
-      if (!response.ok) {{
-        if (response.status === 404) {{
-          state.previewWords = [];
-          renderPreviewWords();
-          return;
-        }}
-        throw new Error(String(response.status));
+      const manifest = await fetchManifest(sessionId, true);
+      if (!manifest) {{
+        state.previewWords = [];
+        state.autoImportSignature = "";
+        state.autoImportSummary = "";
+        renderPreviewWords();
+        return;
       }}
-
-      const manifest = await response.json();
       const words = Array.isArray(manifest?.words) ? manifest.words : [];
       const counts = new Map();
       words.forEach((item) => {{
@@ -914,9 +1241,14 @@ def control_panel_script(default_session_id: str) -> str:
         }})
         .map(([text, count]) => ({{ text, count }}));
       renderPreviewWords();
+      if (state.autoImportEnabled) {{
+        void queueAutoImport({{ manifest }});
+      }}
     }} catch (_error) {{
       if (!state.isRecording && !state.isProcessing) {{
         state.previewWords = [];
+        state.autoImportSignature = "";
+        state.autoImportSummary = "";
       }}
       renderPreviewWords();
     }}
@@ -946,12 +1278,15 @@ def control_panel_script(default_session_id: str) -> str:
           stopStopPolling();
           stopPreviewPolling();
           await refreshWordPreview();
+          await queueAutoImport({{ force: true }});
+          state.autoImportEnabled = false;
           refreshControls();
-          setStatus(`Grabacion procesada: ${{sessionId}}. Ya puedes importar las muestras.`);
+          setStatus(`Grabacion procesada. Las muestras se han importado automaticamente segun el modo seleccionado.`);
           return;
         }}
         if (session.state === "failed") {{
           state.isProcessing = false;
+          state.autoImportEnabled = false;
           stopStopPolling();
           stopPreviewPolling();
           refreshControls();
@@ -1205,25 +1540,70 @@ def control_panel_script(default_session_id: str) -> str:
 
   const refreshControls = () => {{
     sessionInput.disabled = state.busy || state.isRecording;
+    bottomBankInput.disabled = state.busy || state.isRecording;
     modeSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
+    bottomModeSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     openStorageButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     startButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     stopButton.disabled = state.busy || !state.isRecording || state.isUploading || state.isProcessing;
-    importButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
+    importButton.disabled = false;
     closeButton.disabled = state.busy;
     openButton.disabled = state.busy;
+    bottomRecordButton.disabled = state.busy || state.isUploading || state.isProcessing;
 
-    [startButton, stopButton, importButton, closeButton, openStorageButton].forEach((button) => {{
+    [startButton, stopButton, importButton, closeButton, openStorageButton, bottomRecordButton].forEach((button) => {{
       button.style.opacity = button.disabled ? "0.6" : "1";
       button.style.cursor = button.disabled ? "not-allowed" : "pointer";
     }});
+    bottomBankInput.style.opacity = bottomBankInput.disabled ? "0.6" : "1";
+    bottomBankInput.style.cursor = bottomBankInput.disabled ? "not-allowed" : "text";
+    bottomModeSelect.style.opacity = bottomModeSelect.disabled ? "0.6" : "1";
+    bottomModeSelect.style.cursor = bottomModeSelect.disabled ? "not-allowed" : "pointer";
 
     openButton.style.opacity = state.busy ? "0.7" : "1";
-    openButton.textContent = state.isRecording ? "Voice REC" : "Voice";
-    openButton.style.background = state.isRecording ? "#b91c1c" : "#111827";
-    openButton.style.boxShadow = state.isRecording
-      ? "0 0 0 4px rgba(239, 68, 68, 0.18), 0 4px 14px rgba(0, 0, 0, 0.25)"
-      : "0 4px 14px rgba(0, 0, 0, 0.25)";
+    openButton.textContent = state.isRecording ? "voice rec" : "voice";
+    openButton.style.background = "transparent";
+    openButton.style.boxShadow = "none";
+    openButton.style.color = state.isRecording ? "#fca5a5" : "#d1d5db";
+    openButton.style.borderBottomColor = state.isRecording ? "#ef4444" : "transparent";
+
+    importButton.textContent = state.isRecording
+      ? "Importando..."
+      : state.isUploading || state.isProcessing
+        ? "Sincronizando..."
+        : state.autoImportSignature
+          ? "Importado"
+          : "En espera";
+    importButton.style.background = state.isRecording || state.isUploading || state.isProcessing ? "#2563eb" : "#475569";
+    importButton.style.borderColor = state.isRecording || state.isUploading || state.isProcessing ? "#2563eb" : "#475569";
+    autoImportStatusCard.style.background = state.isRecording || state.isUploading || state.isProcessing ? "#eff6ff" : "#f8fafc";
+    autoImportStatusCard.style.borderColor = state.isRecording || state.isUploading || state.isProcessing ? "#bfdbfe" : "#e5e7eb";
+    autoImportStatusTitle.style.color = state.isRecording || state.isUploading || state.isProcessing ? "#1d4ed8" : "#475569";
+    if (state.isRecording) {{
+      autoImportStatusText.textContent = "Importando automaticamente";
+      autoImportStatusHint.textContent = "Las nuevas conversiones se cargan en tiempo real segun el modo seleccionado.";
+      autoImportStatusText.style.color = "#1e3a8a";
+    }} else if (state.isUploading || state.isProcessing) {{
+      autoImportStatusText.textContent = "Sincronizando conversiones";
+      autoImportStatusHint.textContent = "Esperando el ultimo bloque procesado para completar la importacion.";
+      autoImportStatusText.style.color = "#1d4ed8";
+    }} else if (state.autoImportSignature) {{
+      autoImportStatusText.textContent = "Importacion completada";
+      autoImportStatusHint.textContent = state.autoImportSummary || "Las ultimas muestras ya estan listas en Strudel.";
+      autoImportStatusText.style.color = "#166534";
+    }} else {{
+      autoImportStatusText.textContent = "Esperando nuevas conversiones";
+      autoImportStatusHint.textContent = "Pulsa grabar para empezar a importar automaticamente.";
+      autoImportStatusText.style.color = "#334155";
+    }}
+
+    bottomRecordButton.style.background = state.isRecording ? "#dc2626" : "#2563eb";
+    bottomRecordButton.style.animation = state.isRecording ? "strudelVoiceRecordRipple 1.4s ease-out infinite" : "none";
+    bottomRecordButton.style.transform = state.isRecording ? "scale(1.02)" : "scale(1)";
+    bottomRecordButton.style.boxShadow = state.isRecording
+      ? "0 0 0 0 rgba(220, 38, 38, 0.45)"
+      : "0 0 0 0 rgba(37, 99, 235, 0.28)";
+    bottomRecordButton.title = state.isRecording ? "Detener grabacion" : "Iniciar grabacion";
 
     recordingDot.style.background = state.isRecording ? "#ef4444" : "#9ca3af";
     recordingDot.style.boxShadow = state.isRecording ? "0 0 0 6px rgba(239, 68, 68, 0.18)" : "none";
@@ -1263,10 +1643,76 @@ def control_panel_script(default_session_id: str) -> str:
     refreshControls();
   }};
 
+  const findSoundsTab = () => document.getElementById("sounds-tab");
+
+  const findImportSoundsTabButton = () => {{
+    const soundsTab = findSoundsTab();
+    if (!soundsTab) {{
+      return null;
+    }}
+    const buttons = Array.from(soundsTab.querySelectorAll("button"));
+    return buttons.find((button) => button.textContent?.trim().toLowerCase() === "import-sounds") || null;
+  }};
+
+  const syncOpenButtonPlacement = () => {{
+    const importSoundsButton = findImportSoundsTabButton();
+    if (!importSoundsButton?.parentNode) {{
+      openButton.style.display = "none";
+      return;
+    }}
+    openButton.style.display = "inline-flex";
+    if (importSoundsButton.nextSibling !== openButton) {{
+      importSoundsButton.parentNode.insertBefore(openButton, importSoundsButton.nextSibling);
+    }}
+  }};
+
+  const syncBottomRecordBarPlacement = () => {{
+    const soundsTab = findSoundsTab();
+    if (!soundsTab) {{
+      bottomRecordBar.style.display = "none";
+      return;
+    }}
+    bottomRecordBar.style.display = "flex";
+    if (soundsTab.lastChild !== bottomRecordBar) {{
+      soundsTab.appendChild(bottomRecordBar);
+    }}
+  }};
+
   const updatePanelLayout = () => {{
-    const compact = window.innerWidth < 980;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const compact = viewportWidth < 980;
+    const narrow = viewportWidth < 760;
+    const extraNarrow = viewportWidth < 560;
+    const shortViewport = viewportHeight < 760;
+
+    overlay.style.alignItems = shortViewport ? "flex-start" : "center";
+    overlay.style.padding = narrow ? "8px" : "12px";
+
+    panel.style.width = narrow ? "100%" : "720px";
+    panel.style.maxWidth = narrow ? "calc(100vw - 16px)" : "calc(100vw - 32px)";
+    panel.style.maxHeight = narrow ? "calc(100vh - 16px)" : "calc(100vh - 24px)";
+    panel.style.borderRadius = narrow ? "10px" : "12px";
+    panel.style.padding = narrow ? "12px" : "16px";
+
+    title.style.marginBottom = narrow ? "8px" : "10px";
+
     contentLayout.style.gridTemplateColumns = compact ? "1fr" : "minmax(0, 1.05fr) minmax(0, 0.95fr)";
-    rightColumn.style.marginTop = compact ? "0" : "0";
+    contentLayout.style.gap = narrow ? "10px" : "14px";
+
+    recordingState.style.gridTemplateColumns = extraNarrow ? "1fr" : "1fr auto";
+    levelMeterWrap.style.gridColumn = extraNarrow ? "1 / span 1" : "1 / span 2";
+
+    actions.style.gridTemplateColumns = extraNarrow ? "1fr" : narrow ? "1fr 1fr" : "1fr 1fr 1fr";
+
+    processingCard.style.minHeight = compact ? "180px" : "238px";
+    processingWords.style.gridTemplateColumns = extraNarrow
+      ? "repeat(2, minmax(0, 1fr))"
+      : narrow
+        ? "repeat(3, minmax(0, 1fr))"
+        : "repeat(4, minmax(0, 1fr))";
+    processingWords.style.maxHeight = compact ? "160px" : "204px";
+    processingHint.style.maxWidth = compact ? "100%" : "260px";
   }};
 
   const updateStorageInfo = async () => {{
@@ -1320,7 +1766,7 @@ def control_panel_script(default_session_id: str) -> str:
     }}
   }});
 
-  startButton.addEventListener("click", async () => {{
+  const startRecording = async () => {{
     let sessionStarted = false;
     let controlsReleased = false;
     try {{
@@ -1340,6 +1786,9 @@ def control_panel_script(default_session_id: str) -> str:
       state.isUploading = false;
       state.isProcessing = false;
       state.previewWords = [];
+      state.autoImportEnabled = true;
+      state.autoImportSignature = "";
+      state.autoImportSummary = "";
       renderPreviewWords();
       setStatus("Iniciando grabacion...");
       await requestJson("/start", {{ session_id: sessionId }});
@@ -1377,6 +1826,8 @@ def control_panel_script(default_session_id: str) -> str:
       state.isRecording = false;
       state.isUploading = false;
       state.isProcessing = false;
+      state.autoImportEnabled = false;
+      state.autoImportSummary = "";
       stopRecordingClock();
       stopPreviewPolling();
       refreshControls();
@@ -1387,9 +1838,9 @@ def control_panel_script(default_session_id: str) -> str:
         setBusy(false);
       }}
     }}
-  }});
+  }};
 
-  stopButton.addEventListener("click", async () => {{
+  const stopRecording = async () => {{
     try {{
       const sessionId = normalizeSessionId();
       const recorderBackend = state.runtimeDiagnostics?.recorder?.effective_backend
@@ -1420,54 +1871,30 @@ def control_panel_script(default_session_id: str) -> str:
     }} catch (error) {{
       state.isUploading = false;
       state.isProcessing = false;
+      state.autoImportEnabled = false;
+      state.autoImportSummary = "";
       stopStopPolling();
       stopPreviewPolling();
       refreshControls();
       setStatus(`Error al detener: ${{String(error)}}`, true);
     }}
+  }};
+
+  startButton.addEventListener("click", startRecording);
+  stopButton.addEventListener("click", stopRecording);
+  bottomRecordButton.addEventListener("click", async () => {{
+    if (state.busy || state.isUploading || state.isProcessing) {{
+      return;
+    }}
+    if (state.isRecording) {{
+      await stopRecording();
+      return;
+    }}
+    await startRecording();
   }});
 
-  importButton.addEventListener("click", async () => {{
-    try {{
-      const sessionId = normalizeSessionId();
-      setBusy(true);
-      const selectedMode = modeSelect.value;
-      setStatus("Cargando muestras...");
-
-      const response = await fetch(
-        `${{state.baseUrl}}/samples/${{encodeURIComponent(sessionId)}}/manifest`,
-      );
-      if (!response.ok) {{
-        throw new Error(`${{response.status}} — sesion no encontrada o sin muestras`);
-      }}
-      const manifest = await response.json();
-      const items = manifest[selectedMode] || [];
-      if (items.length === 0) {{
-        throw new Error("No hay muestras disponibles. Graba primero y luego detén la sesion.");
-      }}
-
-      // Group by text so s('hola') cycles all recordings of that word.
-      const sampleMap = {{}};
-      for (const item of items) {{
-        const key = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
-        if (!sampleMap[key]) sampleMap[key] = [];
-        sampleMap[key].push(item.url);
-      }}
-
-      const strudelSamples = window.strudelSamples;
-      if (typeof strudelSamples !== "function") {{
-        throw new Error("Strudel aun no esta listo. Espera a que cargue completamente.");
-      }}
-      await strudelSamples(sampleMap);
-
-      const count = Object.keys(sampleMap).length;
-      const label = modeSelect.options[modeSelect.selectedIndex].text;
-      setStatus(`${{count}} muestras de ${{label}} listas. Usa s('nombre') en el editor.`);
-    }} catch (error) {{
-      setStatus(`Error al importar: ${{String(error)}}`, true);
-    }} finally {{
-      setBusy(false);
-    }}
+  importButton.addEventListener("click", () => {{
+    setStatus("La importacion ahora es automatica. Usa el interruptor de grabacion para importar en tiempo real.");
   }});
 
   openButton.addEventListener("click", () => {{
@@ -1480,9 +1907,39 @@ def control_panel_script(default_session_id: str) -> str:
   }});
 
   sessionInput.addEventListener("input", () => {{
+    syncSessionNameInputs(sessionInput.value, sessionInput);
+    state.autoImportSignature = "";
+    state.autoImportSummary = "";
     updateStorageInfo();
     state.previewWords = [];
     renderPreviewWords();
+  }});
+
+  bottomBankInput.addEventListener("input", () => {{
+    syncSessionNameInputs(bottomBankInput.value, bottomBankInput);
+    state.autoImportSignature = "";
+    state.autoImportSummary = "";
+    updateStorageInfo();
+    state.previewWords = [];
+    renderPreviewWords();
+  }});
+
+  modeSelect.addEventListener("change", () => {{
+    syncModeInputs(modeSelect.value, modeSelect);
+    state.autoImportSignature = "";
+    state.autoImportSummary = "";
+    if (state.autoImportEnabled) {{
+      void queueAutoImport({{ force: true }});
+    }}
+  }});
+
+  bottomModeSelect.addEventListener("change", () => {{
+    syncModeInputs(bottomModeSelect.value, bottomModeSelect);
+    state.autoImportSignature = "";
+    state.autoImportSummary = "";
+    if (state.autoImportEnabled) {{
+      void queueAutoImport({{ force: true }});
+    }}
   }});
 
   closeButton.addEventListener("click", () => {{
@@ -1503,6 +1960,14 @@ def control_panel_script(default_session_id: str) -> str:
     void stopVisualizer();
   }});
   window.addEventListener("resize", updatePanelLayout);
+  const placementObserver = new MutationObserver(() => {{
+    syncOpenButtonPlacement();
+    syncBottomRecordBarPlacement();
+  }});
+  placementObserver.observe(document.body, {{
+    childList: true,
+    subtree: true,
+  }});
 
   actions.appendChild(startButton);
   actions.appendChild(stopButton);
@@ -1513,6 +1978,7 @@ def control_panel_script(default_session_id: str) -> str:
     modeLabel,
     modeSelect,
     actions,
+    autoImportStatusCard,
     visualizerCard,
     status,
     closeButton,
@@ -1531,13 +1997,15 @@ def control_panel_script(default_session_id: str) -> str:
   contentLayout.appendChild(rightColumn);
   panel.appendChild(contentLayout);
   overlay.appendChild(panel);
-  document.body.appendChild(openButton);
   document.body.appendChild(overlay);
   paintVisualizerIdle();
   setLevelMeter(0);
   updateRecordingClock();
   renderPreviewWords();
   updatePanelLayout();
+  syncModeInputs(modeSelect.value);
+  syncOpenButtonPlacement();
+  syncBottomRecordBarPlacement();
   refreshControls();
   updateStorageInfo();
   void updateRuntimeInfo();

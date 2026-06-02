@@ -89,12 +89,10 @@ class FasterWhisperTranscriber(BaseTranscriber):
                 end = max(start + 0.01, float(word.end) if word.end is not None else start + 0.25)
                 words.append(WordTiming(word=token, start=round(start, 3), end=round(end, 3)))
 
-        if words:
-            return words
-        return MockTranscriber(self._fallback_words).transcribe(
-            audio_path,
-            chunk_index=chunk_index,
-        )
+        # Silence / non-speech chunks legitimately yield no words. Return them as
+        # empty instead of fabricating mock words, otherwise a microphone that is
+        # not actually capturing audio would be masked by fake transcripts.
+        return words
 
 
 def create_transcriber(

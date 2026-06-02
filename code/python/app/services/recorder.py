@@ -93,7 +93,9 @@ class MicrophoneRecorder(BaseRecorder):
         selected_device = self._resolve_selected_device()
         if selected_device is None:
             raise RuntimeError(
-                "No usable input microphone is available. Check Windows microphone permission and audio device settings."
+                "No usable input microphone is available. Check the OS microphone "
+                "permission and audio device settings (on Linux make sure PulseAudio/"
+                "PipeWire exposes an input source and libportaudio2 is installed)."
             )
 
         try:

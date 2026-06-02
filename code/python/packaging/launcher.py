@@ -126,8 +126,11 @@ def configure_runtime_defaults(logger: logging.Logger) -> None:
         default_samples_root = Path.home() / "Documents" / "strudel-voice" / "samples"
     machine_name = platform.machine().lower()
     is_windows_arm = sys.platform == "win32" and machine_name in {"arm64", "aarch64"}
-    is_linux = sys.platform.startswith("linux")
-    default_recorder_backend = "browser" if is_windows_arm or is_linux else "microphone"
+    # Windows-on-ARM still lacks a reliable bundled PortAudio build, so it keeps the
+    # browser capture path. Linux records server-side via sounddevice/PortAudio so the
+    # captured audio is real (the browser path silently produced empty/silent chunks
+    # on many Ubuntu setups). Requires libportaudio2 to be installed on the system.
+    default_recorder_backend = "browser" if is_windows_arm else "microphone"
     defaults = {
         "STRUDEL_RECORDER_BACKEND": default_recorder_backend,
         "STRUDEL_TRANSCRIBER_BACKEND": "faster-whisper",

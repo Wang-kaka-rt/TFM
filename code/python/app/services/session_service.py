@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.core.session_manager import SessionManager
 from app.models.session import SessionInfo
 from app.services.aggregator import NlpAggregator
+from app.services.denoiser import BaseDenoiser, create_denoiser
 from app.services.errors import SessionNotFoundError
 from app.services.recorder import (
     BaseRecorder,
@@ -22,6 +23,7 @@ from app.services.recorder import (
     create_recorder,
     get_microphone_diagnostics,
     get_wav_audio_info,
+    get_wav_rms,
 )
 from app.services.refiner import BaseRefiner, create_refiner
 from app.services.transcriber import BaseTranscriber, WordTiming, create_transcriber
@@ -132,6 +134,10 @@ class SessionService:
                 transcriber_language=settings.transcriber_language,
                 transcriber_initial_prompt=settings.transcriber_initial_prompt,
                 transcriber_hotwords=settings.transcriber_hotwords,
+                faster_whisper_vad_filter=settings.faster_whisper_vad_filter,
+                faster_whisper_no_speech_threshold=settings.faster_whisper_no_speech_threshold,
+                faster_whisper_log_prob_threshold=settings.faster_whisper_log_prob_threshold,
+                faster_whisper_compression_ratio_threshold=settings.faster_whisper_compression_ratio_threshold,
             )
         except Exception as exc:
             logger.warning(
@@ -150,6 +156,10 @@ class SessionService:
                 transcriber_language=settings.transcriber_language,
                 transcriber_initial_prompt=settings.transcriber_initial_prompt,
                 transcriber_hotwords=settings.transcriber_hotwords,
+                faster_whisper_vad_filter=settings.faster_whisper_vad_filter,
+                faster_whisper_no_speech_threshold=settings.faster_whisper_no_speech_threshold,
+                faster_whisper_log_prob_threshold=settings.faster_whisper_log_prob_threshold,
+                faster_whisper_compression_ratio_threshold=settings.faster_whisper_compression_ratio_threshold,
             )
             self._effective_transcriber_backend = "mock"
         else:
@@ -162,6 +172,11 @@ class SessionService:
             silero_speech_threshold=settings.silero_speech_threshold,
         )
         self._aggregator = NlpAggregator(settings.phrase_group_size)
+        self._denoiser: BaseDenoiser = create_denoiser(
+            settings.denoise_backend,
+            prop_decrease=settings.denoise_prop_decrease,
+            stationary=settings.denoise_stationary,
+        )
         self._refiner: BaseRefiner = create_refiner(
             settings.refinement_backend,
             whisperx_model=settings.whisperx_model,
@@ -173,6 +188,9 @@ class SessionService:
         self._chunk_processing_latencies: list[float] = []
         self._slice_export_attempts = 0
         self._slice_export_failures = 0
+        self._denoised_chunk_count = 0
+        self._energy_gated_chunk_count = 0
+        self._low_confidence_word_drops = 0
         try:
             self._settings.samples_root.mkdir(parents=True, exist_ok=True)
         except PermissionError:
@@ -276,6 +294,9 @@ class SessionService:
             "p95_chunk_latency_ms": p95_latency_ms,
             "word_retention_percent": word_retention_percent,
             "slice_success_rate_percent": slice_success_rate_percent,
+            "denoised_chunk_count": self._denoised_chunk_count,
+            "energy_gated_chunk_count": self._energy_gated_chunk_count,
+            "low_confidence_word_drops": self._low_confidence_word_drops,
         }
 
     def get_runtime_diagnostics(self) -> dict[str, object]:
@@ -429,12 +450,40 @@ class SessionService:
         chunk_index: int,
         start_time: float,
     ) -> None:
+        # Noise robustness stage 1: reduce background noise in place before ASR.
+        if self._settings.enable_denoise:
+            if await asyncio.to_thread(self._denoiser.denoise, audio_path):
+                self._denoised_chunk_count += 1
+
+        # Noise robustness stage 2: skip near-silent chunks so the recognizer is
+        # never asked to transcribe ambient noise (a common hallucination source).
+        if self._settings.enable_energy_gate and self._settings.min_chunk_rms > 0:
+            chunk_rms = await asyncio.to_thread(get_wav_rms, audio_path)
+            if chunk_rms < self._settings.min_chunk_rms:
+                self._energy_gated_chunk_count += 1
+                chunk = ChunkRecord(
+                    index=chunk_index,
+                    audio_path=audio_path,
+                    duration_seconds=audio_info.duration_seconds,
+                    processing_latency_seconds=max(0.0, time.perf_counter() - start_time),
+                    raw_word_count=0,
+                    words=[],
+                )
+                runtime.chunks.append(chunk)
+                self._write_artifacts(runtime)
+                return
+
         words = await asyncio.to_thread(
             self._transcriber.transcribe,
             audio_path,
             chunk_index=chunk_index,
         )
         raw_word_count = len(words)
+        # Noise robustness stage 3: drop low-confidence words (typically noise).
+        if self._settings.word_min_probability > 0:
+            kept = [word for word in words if word.probability >= self._settings.word_min_probability]
+            self._low_confidence_word_drops += len(words) - len(kept)
+            words = kept
         if self._settings.enable_vad:
             words = self._vad.filter_words(words, audio_path)
         processing_latency = max(0.0, time.perf_counter() - start_time)
@@ -473,6 +522,9 @@ class SessionService:
             "recorder_backend": self._effective_recorder_backend,
             "transcriber_backend": self._effective_transcriber_backend,
             "vad_backend": self._settings.vad_backend if self._settings.enable_vad else "disabled",
+            "denoise_backend": self._settings.denoise_backend if self._settings.enable_denoise else "disabled",
+            "energy_gate_rms": self._settings.min_chunk_rms if self._settings.enable_energy_gate else None,
+            "word_min_probability": self._settings.word_min_probability,
             "refinement_backend": self._settings.refinement_backend if self._settings.enable_refinement else "disabled",
             "chunks": [
                 {

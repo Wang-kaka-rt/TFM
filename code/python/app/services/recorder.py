@@ -252,6 +252,30 @@ def get_wav_audio_info(audio_path: Path) -> ChunkAudioInfo:
     )
 
 
+def get_wav_rms(audio_path: Path) -> float:
+    """Return the normalized RMS amplitude (0..1) of a 16-bit PCM WAV file.
+
+    Used by the energy gate to skip near-silent chunks before transcription.
+    Returns 0.0 for empty files and 1.0-capped values; non 16-bit audio yields
+    0.0 so the caller treats it as "cannot measure" rather than silent.
+    """
+    with wave.open(str(audio_path), "rb") as wav_file:
+        sample_width = wav_file.getsampwidth()
+        frame_count = wav_file.getnframes()
+        frames = wav_file.readframes(frame_count)
+    if sample_width != 2 or not frames:
+        return 0.0
+    total = 0
+    count = 0
+    for value in struct.iter_unpack("<h", frames):
+        sample = value[0]
+        total += sample * sample
+        count += 1
+    if count == 0:
+        return 0.0
+    return min(1.0, math.sqrt(total / count) / 32768.0)
+
+
 def get_microphone_diagnostics(
     *,
     device: int | None,

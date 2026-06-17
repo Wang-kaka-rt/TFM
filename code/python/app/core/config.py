@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     faster_whisper_device: str = "auto"
     faster_whisper_compute_type: str = "int8"
     faster_whisper_beam_size: int = 5
+    # Anti-hallucination guards for noisy input. faster-whisper fabricates words
+    # on pure-noise chunks unless these thresholds reject low-confidence audio.
+    faster_whisper_vad_filter: bool = True
+    faster_whisper_no_speech_threshold: float = 0.6
+    faster_whisper_log_prob_threshold: float = -1.0
+    faster_whisper_compression_ratio_threshold: float = 2.4
+    # Drop transcribed words whose ASR probability is below this value. 0.0 keeps
+    # every word (default, mock-safe); raise to ~0.45 in noisy environments.
+    word_min_probability: float = 0.0
     transcriber_language: str | None = "es"
     transcriber_initial_prompt: str = (
         "Vocabulario en español para nombres de sonidos: hola, bien, bueno, consejo, familia, "
@@ -67,6 +76,16 @@ class Settings(BaseSettings):
     min_word_duration_seconds: float = 0.04
     silero_sample_rate: int = 16_000
     silero_speech_threshold: float = 0.5
+    # Pre-ASR noise reduction. Disabled by default so existing behavior is
+    # unchanged; enable with backend 'noisereduce' for noisy environments.
+    enable_denoise: bool = False
+    denoise_backend: str = "null"
+    denoise_prop_decrease: float = 0.8
+    denoise_stationary: bool = False
+    # Energy gate: skip whole chunks whose RMS amplitude (0..1) is below this
+    # value. 0.0 disables the gate (default); ~0.005 drops near-silent chunks.
+    enable_energy_gate: bool = False
+    min_chunk_rms: float = 0.0
     phrase_group_size: int = 2
     enable_refinement: bool = False
     refinement_backend: str = "mock"

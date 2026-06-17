@@ -28,6 +28,45 @@ STRUDEL_MICROPHONE_DEVICE=0
 
 Change `0` to the device index you want.
 
+## 2b. Noisy environments
+
+When recording with background noise, layer these guards on top of real mode.
+All default to off, so enable them only when needed:
+
+```text
+# Reject low-confidence / non-speech audio inside faster-whisper
+STRUDEL_FASTER_WHISPER_VAD_FILTER=true
+STRUDEL_FASTER_WHISPER_NO_SPEECH_THRESHOLD=0.6
+
+# Drop transcribed words whose ASR probability is too low (noise artifacts)
+STRUDEL_WORD_MIN_PROBABILITY=0.45
+
+# Tighten Silero VAD so weak/noisy segments are discarded
+STRUDEL_SILERO_SPEECH_THRESHOLD=0.65
+STRUDEL_MIN_WORD_DURATION_SECONDS=0.08
+
+# Spectral-gating denoise before ASR (needs noisereduce, in requirements.realtime.txt)
+STRUDEL_ENABLE_DENOISE=true
+STRUDEL_DENOISE_BACKEND=noisereduce
+# 0.6 (gentle, keeps more voice) .. 0.9 (aggressive, removes more noise)
+STRUDEL_DENOISE_PROP_DECREASE=0.8
+# false = non-stationary (default, preserves voice better for varying noise)
+# true  = stationary (best only for a constant hum; over-attenuates speech)
+STRUDEL_DENOISE_STATIONARY=false
+
+# Skip near-silent chunks entirely (tune min RMS to your room, 0..1)
+STRUDEL_ENABLE_ENERGY_GATE=true
+STRUDEL_MIN_CHUNK_RMS=0.005
+```
+
+The pipeline becomes: denoise → energy gate → faster-whisper (anti-hallucination)
+→ confidence filter → Silero VAD → slicing. `/metrics` reports
+`denoised_chunk_count`, `energy_gated_chunk_count`, and `low_confidence_word_drops`
+so you can quantify each guard's effect (useful for the thesis experiments).
+
+The strongest single improvement is still at capture time: use a close,
+directional/headset microphone, or add a push-to-talk control on the panel.
+
 ## 3. Run backend
 
 ```powershell

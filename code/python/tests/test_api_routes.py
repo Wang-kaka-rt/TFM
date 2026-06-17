@@ -35,7 +35,7 @@ def test_start_stop_and_artifact_endpoints(tmp_path):
 
     stop_response = client.post("/stop", json={"session_id": "api01"})
     assert stop_response.status_code == 200
-    assert stop_response.json()["message"] == "session stop requested"
+    assert stop_response.json()["message"] == "solicitud de parada enviada"
     assert stop_response.json()["session"]["state"] == "processing"
 
     for _ in range(50):

@@ -18,6 +18,7 @@ class WordTiming:
     word: str
     start: float
     end: float
+    probability: float = 1.0
 
 
 class BaseTranscriber:
@@ -56,6 +57,10 @@ class FasterWhisperTranscriber(BaseTranscriber):
         initial_prompt: str | None = None,
         hotwords: str | None = None,
         fallback_words: list[str] | None = None,
+        vad_filter: bool = True,
+        no_speech_threshold: float = 0.6,
+        log_prob_threshold: float = -1.0,
+        compression_ratio_threshold: float = 2.4,
     ) -> None:
         try:
             from faster_whisper import WhisperModel  # type: ignore
@@ -69,6 +74,10 @@ class FasterWhisperTranscriber(BaseTranscriber):
         self._initial_prompt = initial_prompt or None
         self._hotwords = hotwords or None
         self._fallback_words = fallback_words or ["hola", "ritmo", "voz"]
+        self._vad_filter = vad_filter
+        self._no_speech_threshold = no_speech_threshold
+        self._log_prob_threshold = log_prob_threshold
+        self._compression_ratio_threshold = compression_ratio_threshold
 
     def transcribe(self, audio_path: Path, *, chunk_index: int) -> list[WordTiming]:
         segments, _ = self._model.transcribe(
@@ -78,6 +87,10 @@ class FasterWhisperTranscriber(BaseTranscriber):
             language=self._language,
             initial_prompt=self._initial_prompt,
             hotwords=self._hotwords,
+            vad_filter=self._vad_filter,
+            no_speech_threshold=self._no_speech_threshold,
+            log_prob_threshold=self._log_prob_threshold,
+            compression_ratio_threshold=self._compression_ratio_threshold,
         )
         words: list[WordTiming] = []
         for segment in segments:
@@ -87,7 +100,15 @@ class FasterWhisperTranscriber(BaseTranscriber):
                     continue
                 start = 0.0 if word.start is None else float(word.start)
                 end = max(start + 0.01, float(word.end) if word.end is not None else start + 0.25)
-                words.append(WordTiming(word=token, start=round(start, 3), end=round(end, 3)))
+                probability = 1.0 if getattr(word, "probability", None) is None else float(word.probability)
+                words.append(
+                    WordTiming(
+                        word=token,
+                        start=round(start, 3),
+                        end=round(end, 3),
+                        probability=round(probability, 4),
+                    )
+                )
 
         # Silence / non-speech chunks legitimately yield no words. Return them as
         # empty instead of fabricating mock words, otherwise a microphone that is
@@ -106,6 +127,10 @@ def create_transcriber(
     transcriber_language: str | None = "es",
     transcriber_initial_prompt: str | None = None,
     transcriber_hotwords: str | None = None,
+    faster_whisper_vad_filter: bool = True,
+    faster_whisper_no_speech_threshold: float = 0.6,
+    faster_whisper_log_prob_threshold: float = -1.0,
+    faster_whisper_compression_ratio_threshold: float = 2.4,
 ) -> BaseTranscriber:
     if backend == "faster-whisper":
         return FasterWhisperTranscriber(
@@ -117,6 +142,10 @@ def create_transcriber(
             initial_prompt=transcriber_initial_prompt,
             hotwords=transcriber_hotwords,
             fallback_words=seed_words,
+            vad_filter=faster_whisper_vad_filter,
+            no_speech_threshold=faster_whisper_no_speech_threshold,
+            log_prob_threshold=faster_whisper_log_prob_threshold,
+            compression_ratio_threshold=faster_whisper_compression_ratio_threshold,
         )
     return MockTranscriber(seed_words)
 

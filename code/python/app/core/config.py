@@ -92,18 +92,7 @@ class Settings(BaseSettings):
     whisperx_model: str = "small"
     whisperx_device: str = "cpu"
     whisperx_compute_type: str = "int8"
-    mock_transcript_words: list[str] = Field(
-        default_factory=lambda: [
-            "hola",
-            "ritmo",
-            "voz",
-            "muestra",
-            "frase",
-            "pulso",
-            "eco",
-            "grave",
-        ]
-    )
+    mock_transcript_words: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def resolve_paths(self) -> "Settings":

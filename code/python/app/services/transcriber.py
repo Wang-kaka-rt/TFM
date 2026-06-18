@@ -31,6 +31,8 @@ class MockTranscriber(BaseTranscriber):
         self._seed_words = seed_words
 
     def transcribe(self, audio_path: Path, *, chunk_index: int) -> list[WordTiming]:
+        if not self._seed_words:
+            return []
         duration = get_wav_duration(audio_path)
         words_per_chunk = 3
         token_count = min(words_per_chunk, max(1, len(self._seed_words)))

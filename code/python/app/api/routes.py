@@ -56,6 +56,21 @@ async def runtime_info() -> dict[str, object]:
     return session_service.get_runtime_diagnostics()
 
 
+@router.post("/transcriber/model", tags=["system"])
+async def set_transcriber_model(
+    model: str = Query(..., description="faster-whisper model: tiny|base|small|medium|large-v2|large-v3"),
+) -> dict[str, object]:
+    try:
+        return await session_service.set_transcriber_model(model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to switch transcriber model to '%s'", model)
+        raise HTTPException(status_code=500, detail=f"failed to load model '{model}': {exc}") from exc
+
+
 @router.get("/storage", tags=["system"])
 async def storage_info(
     session_id: str | None = Query(default=None, description="Optional session id for resolved storage paths"),
@@ -163,26 +178,35 @@ async def session_status(
     )
 
 
+def _read_artifact_bytes(path: Path) -> bytes:
+    # These JSON/JS artifacts are rewritten on every processed chunk while the
+    # control panel polls them. Read the whole file into memory in one shot and
+    # let the Response derive Content-Length from the exact bytes returned. Using
+    # FileResponse here races the concurrent rewrite (it stats the size first,
+    # then streams) and triggers "Response content longer than Content-Length".
+    return path.read_bytes()
+
+
 @router.get("/strudel/{session_id}", tags=["artifacts"])
-async def get_strudel_script(session_id: str) -> FileResponse:
+async def get_strudel_script(session_id: str) -> Response:
     try:
         script_path = session_service.get_strudel_script_path(session_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"session '{session_id}' not found") from exc
     if not script_path.exists():
         raise HTTPException(status_code=404, detail=f"strudel artifact for '{session_id}' not found")
-    return FileResponse(script_path, media_type="application/javascript", filename="strudel.js")
+    return Response(content=_read_artifact_bytes(script_path), media_type="application/javascript")
 
 
 @router.get("/samples/{session_id}/manifest", tags=["artifacts"])
-async def get_samples_manifest(session_id: str) -> FileResponse:
+async def get_samples_manifest(session_id: str) -> Response:
     try:
         manifest_path = session_service.get_samples_manifest_path(session_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"session '{session_id}' not found") from exc
     if not manifest_path.exists():
         raise HTTPException(status_code=404, detail=f"samples manifest for '{session_id}' not found")
-    return FileResponse(manifest_path, media_type="application/json", filename="samples.json")
+    return Response(content=_read_artifact_bytes(manifest_path), media_type="application/json")
 
 
 @router.get("/samples/{session_id}/{sample_group}/{file_name}", tags=["artifacts"])
@@ -203,14 +227,14 @@ async def get_sample_file(
 
 
 @router.get("/metadata/{session_id}", tags=["artifacts"])
-async def get_metadata(session_id: str) -> FileResponse:
+async def get_metadata(session_id: str) -> Response:
     try:
         metadata_path = session_service.get_metadata_path(session_id)
     except SessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"session '{session_id}' not found") from exc
     if not metadata_path.exists():
         raise HTTPException(status_code=404, detail=f"metadata for '{session_id}' not found")
-    return FileResponse(metadata_path, media_type="application/json", filename="metadata.json")
+    return Response(content=_read_artifact_bytes(metadata_path), media_type="application/json")
 
 
 @router.get("/metrics", tags=["system"])

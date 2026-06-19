@@ -190,46 +190,14 @@ def control_panel_script(default_session_id: str) -> str:
     width: "100%",
   }});
 
-  const bottomModeWrap = document.createElement("div");
-  Object.assign(bottomModeWrap.style, {{
-    minWidth: "160px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-    flexShrink: "0",
-  }});
-
-  const bottomModeLabel = document.createElement("label");
-  bottomModeLabel.textContent = "Modo";
-  Object.assign(bottomModeLabel.style, {{
-    fontSize: "11px",
-    fontWeight: "700",
-    color: "#cbd5e1",
-    letterSpacing: "0.03em",
-  }});
-
-  const bottomModeSelect = document.createElement("select");
-  Object.assign(bottomModeSelect.style, {{
-    width: "160px",
-    height: "34px",
-    padding: "0 10px",
-    borderRadius: "8px",
-    border: "1px solid #475569",
-    background: "#0f172a",
-    color: "#f8fafc",
-    boxSizing: "border-box",
-    fontSize: "14px",
-  }});
-
+  // The "Modo" selector was removed: every level (oraciones/frases/palabras/letras)
+  // is now imported at once into its own bank, so there is nothing to choose here.
   bottomRecordMeta.appendChild(bottomBankLabel);
   bottomRecordMeta.appendChild(bottomBankInput);
-  bottomModeWrap.appendChild(bottomModeLabel);
-  bottomModeWrap.appendChild(bottomModeSelect);
   bottomRecordButtonWrap.appendChild(bottomRecordSpacer);
   bottomRecordButtonWrap.appendChild(bottomRecordButton);
   bottomRecordBar.appendChild(bottomRecordMeta);
   bottomRecordBar.appendChild(bottomRecordButtonWrap);
-  bottomRecordBar.appendChild(bottomModeWrap);
 
   const overlay = document.createElement("div");
   overlay.className = "strudel-voice-scroll-hidden";
@@ -501,6 +469,63 @@ def control_panel_script(default_session_id: str) -> str:
     wordBreak: "break-word",
   }});
 
+  const modelLabel = document.createElement("label");
+  modelLabel.textContent = "Modelo de reconocimiento";
+  Object.assign(modelLabel.style, {{
+    display: "block",
+    fontSize: "12px",
+    color: "#374151",
+    marginBottom: "6px",
+  }});
+
+  const modelSelect = document.createElement("select");
+  Object.assign(modelSelect.style, {{
+    width: "100%",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
+    padding: "8px 10px",
+    marginBottom: "12px",
+    boxSizing: "border-box",
+    backgroundColor: "#ffffff",
+    color: "#111827",
+    fontSize: "14px",
+  }});
+  [
+    ["tiny", "tiny — el más rápido"],
+    ["base", "base — ligero"],
+    ["small", "small — equilibrado (CPU)"],
+    ["medium", "medium — preciso (GPU)"],
+    ["large-v3", "large-v3 — máxima precisión (GPU)"],
+  ].forEach(([value, label]) => {{
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.style.color = "#111827";
+    option.style.backgroundColor = "#ffffff";
+    modelSelect.appendChild(option);
+  }});
+  modelSelect.addEventListener("change", async () => {{
+    const model = modelSelect.value;
+    modelSelect.disabled = true;
+    setStatus(`Cargando modelo ${{model}}... (la primera vez puede descargarlo)`);
+    try {{
+      const response = await fetch(
+        `${{state.baseUrl}}/transcriber/model?model=${{encodeURIComponent(model)}}`,
+        {{ method: "POST" }},
+      );
+      if (!response.ok) {{
+        throw new Error(await formatRuntimeErrorMessage(response));
+      }}
+      await updateRuntimeInfo();
+      setStatus(`Modelo de reconocimiento cambiado a ${{model}}.`);
+    }} catch (error) {{
+      setStatus(`No se pudo cambiar el modelo: ${{String(error)}}`, true);
+      await updateRuntimeInfo();
+    }} finally {{
+      refreshControls();
+    }}
+  }});
+
   const processingCard = document.createElement("div");
   Object.assign(processingCard.style, {{
     minHeight: "238px",
@@ -662,7 +687,6 @@ def control_panel_script(default_session_id: str) -> str:
     option.style.color = "#111827";
     option.style.backgroundColor = "#ffffff";
     modeSelect.appendChild(option);
-    bottomModeSelect.appendChild(option.cloneNode(true));
   }});
 
   const actions = document.createElement("div");
@@ -826,9 +850,6 @@ def control_panel_script(default_session_id: str) -> str:
     if (source !== modeSelect) {{
       modeSelect.value = value;
     }}
-    if (source !== bottomModeSelect) {{
-      bottomModeSelect.value = value;
-    }}
   }};
 
   const setStatus = (message, isError = false) => {{
@@ -894,6 +915,14 @@ def control_panel_script(default_session_id: str) -> str:
       `Reconocimiento: ${{transcriberReady ? "listo" : "no disponible"}} ` +
       `(${{transcriber.configured_backend || "desconocido"}} -> ${{transcriber.effective_backend || "desconocido"}})`,
     );
+    const execLabel = transcriber.device === "cuda" ? "GPU" : transcriber.device === "cpu" ? "CPU" : null;
+    if (execLabel) {{
+      const modelSuffix = transcriber.model ? ` · modelo ${{transcriber.model}}` : "";
+      lines.push(`Ejecución: ${{execLabel}}${{modelSuffix}}`);
+    }}
+    if (transcriber.model && !modelSelect.disabled) {{
+      modelSelect.value = transcriber.model;
+    }}
     if (transcriber.init_error) {{
       lines.push(`Error de reconocimiento: ${{transcriber.init_error}}`);
     }}
@@ -1064,23 +1093,40 @@ def control_panel_script(default_session_id: str) -> str:
     return response.json();
   }};
 
-  const buildSampleMap = (items) => {{
-    const sampleMap = {{}};
-    for (const item of items) {{
-      const key = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
-      if (!sampleMap[key]) {{
-        sampleMap[key] = [];
+  // Every recognition level is imported at once, each into its own Strudel bank
+  // so the original text name is preserved across levels without collisions.
+  // Usage in the editor: s('hola').bank('palabras')  /  s('hola').bank('oraciones')
+  const LEVEL_BANKS = [
+    ["sentences", "oraciones", "Oraciones"],
+    ["phrases", "frases", "Frases"],
+    ["words", "palabras", "Palabras"],
+    ["letters", "letras", "Letras"],
+  ];
+
+  const buildCombinedSampleMap = (manifest) => {{
+    const combined = {{}};
+    const perBankCounts = {{}};
+    for (const [level, bank] of LEVEL_BANKS) {{
+      const items = Array.isArray(manifest?.[level]) ? manifest[level] : [];
+      for (const item of items) {{
+        const base = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
+        // bank('palabras') makes Strudel look up 'palabras_' + the typed name.
+        const key = `${{bank}}_${{base}}`;
+        if (!combined[key]) {{
+          combined[key] = [];
+          perBankCounts[bank] = (perBankCounts[bank] || 0) + 1;
+        }}
+        combined[key].push(item.url);
       }}
-      sampleMap[key].push(item.url);
     }}
-    return sampleMap;
+    return {{ combined, perBankCounts }};
   }};
 
-  const createImportSignature = (sessionId, mode, sampleMap) => {{
-    const entries = Object.entries(sampleMap)
+  const createImportSignature = (sessionId, combined) => {{
+    const entries = Object.entries(combined)
       .sort((a, b) => a[0].localeCompare(b[0], undefined, {{ sensitivity: "base" }}))
       .map(([key, urls]) => `${{key}}:${{urls.join("|")}}`);
-    return `${{sessionId}}::${{mode}}::${{entries.join("||")}}`;
+    return `${{sessionId}}::all::${{entries.join("||")}}`;
   }};
 
   const importSamplesIntoStrudel = async ({{ manifest = null, manual = false, force = false }} = {{}}) => {{
@@ -1094,7 +1140,6 @@ def control_panel_script(default_session_id: str) -> str:
       return false;
     }}
 
-    const selectedMode = modeSelect.value;
     const resolvedManifest = manifest || await fetchManifest(sessionId, !manual);
     if (!resolvedManifest) {{
       if (manual) {{
@@ -1105,8 +1150,9 @@ def control_panel_script(default_session_id: str) -> str:
       return false;
     }}
 
-    const items = Array.isArray(resolvedManifest?.[selectedMode]) ? resolvedManifest[selectedMode] : [];
-    if (!items.length) {{
+    const {{ combined, perBankCounts }} = buildCombinedSampleMap(resolvedManifest);
+    const totalGroups = Object.keys(combined).length;
+    if (!totalGroups) {{
       if (manual) {{
         throw new Error("No hay muestras disponibles. Graba primero y luego detén la sesion.");
       }}
@@ -1115,8 +1161,7 @@ def control_panel_script(default_session_id: str) -> str:
       return false;
     }}
 
-    const sampleMap = buildSampleMap(items);
-    const signature = createImportSignature(sessionId, selectedMode, sampleMap);
+    const signature = createImportSignature(sessionId, combined);
     if (!force && state.autoImportSignature === signature) {{
       return false;
     }}
@@ -1125,16 +1170,20 @@ def control_panel_script(default_session_id: str) -> str:
     if (typeof strudelSamples !== "function") {{
       throw new Error("Strudel aun no esta listo. Espera a que cargue completamente.");
     }}
-    await strudelSamples(sampleMap);
+    // Import all four levels in a single call; each key is already bank-prefixed.
+    // The "voice" tag lets Strudel's sounds panel group them under their own tab
+    // and show the bare text (e.g. "bueno") instead of the "frases_bueno" key.
+    await strudelSamples(combined, "", {{ tag: "voice" }});
     state.autoImportSignature = signature;
 
-    const count = Object.keys(sampleMap).length;
-    const label = modeSelect.options[modeSelect.selectedIndex].text;
-    state.autoImportSummary = `${{count}} grupos de ${{label}} listos en Strudel.`;
+    const summaryParts = LEVEL_BANKS
+      .filter(([, bank]) => perBankCounts[bank])
+      .map(([, bank, label]) => `${{label}} ${{perBankCounts[bank]}} (bank '${{bank}}')`);
+    state.autoImportSummary = `${{totalGroups}} grupos en bancos — ${{summaryParts.join(", ")}}.`;
     if (manual) {{
-      setStatus(`${{count}} muestras de ${{label}} listas. Usa s('nombre') en el editor.`);
+      setStatus(`${{totalGroups}} muestras listas. Usa s('texto').bank('oraciones'|'frases'|'palabras'|'letras').`);
     }} else if (state.autoImportEnabled) {{
-      setStatus(`Importacion automatica completada: ${{count}} grupos de ${{label}}.`);
+      setStatus(`Importacion automatica: ${{summaryParts.join(", ")}}.`);
     }}
     return true;
   }};
@@ -1281,7 +1330,7 @@ def control_panel_script(default_session_id: str) -> str:
           await queueAutoImport({{ force: true }});
           state.autoImportEnabled = false;
           refreshControls();
-          setStatus(`Grabacion procesada. Las muestras se han importado automaticamente segun el modo seleccionado.`);
+          setStatus(`Grabacion procesada. Oraciones, Frases, Palabras y Letras se importaron en sus bancos.`);
           return;
         }}
         if (session.state === "failed") {{
@@ -1542,7 +1591,9 @@ def control_panel_script(default_session_id: str) -> str:
     sessionInput.disabled = state.busy || state.isRecording;
     bottomBankInput.disabled = state.busy || state.isRecording;
     modeSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
-    bottomModeSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
+    modelSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
+    modelSelect.style.opacity = modelSelect.disabled ? "0.6" : "1";
+    modelSelect.style.cursor = modelSelect.disabled ? "not-allowed" : "pointer";
     openStorageButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     startButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     stopButton.disabled = state.busy || !state.isRecording || state.isUploading || state.isProcessing;
@@ -1557,8 +1608,6 @@ def control_panel_script(default_session_id: str) -> str:
     }});
     bottomBankInput.style.opacity = bottomBankInput.disabled ? "0.6" : "1";
     bottomBankInput.style.cursor = bottomBankInput.disabled ? "not-allowed" : "text";
-    bottomModeSelect.style.opacity = bottomModeSelect.disabled ? "0.6" : "1";
-    bottomModeSelect.style.cursor = bottomModeSelect.disabled ? "not-allowed" : "pointer";
 
     openButton.style.opacity = state.busy ? "0.7" : "1";
     openButton.textContent = state.isRecording ? "voice rec" : "voice";
@@ -1581,7 +1630,7 @@ def control_panel_script(default_session_id: str) -> str:
     autoImportStatusTitle.style.color = state.isRecording || state.isUploading || state.isProcessing ? "#1d4ed8" : "#475569";
     if (state.isRecording) {{
       autoImportStatusText.textContent = "Importando automaticamente";
-      autoImportStatusHint.textContent = "Las nuevas conversiones se cargan en tiempo real segun el modo seleccionado.";
+      autoImportStatusHint.textContent = "Las conversiones se cargan en tiempo real en los 4 bancos: oraciones, frases, palabras, letras.";
       autoImportStatusText.style.color = "#1e3a8a";
     }} else if (state.isUploading || state.isProcessing) {{
       autoImportStatusText.textContent = "Sincronizando conversiones";
@@ -1933,15 +1982,6 @@ def control_panel_script(default_session_id: str) -> str:
     }}
   }});
 
-  bottomModeSelect.addEventListener("change", () => {{
-    syncModeInputs(bottomModeSelect.value, bottomModeSelect);
-    state.autoImportSignature = "";
-    state.autoImportSummary = "";
-    if (state.autoImportEnabled) {{
-      void queueAutoImport({{ force: true }});
-    }}
-  }});
-
   closeButton.addEventListener("click", () => {{
     overlay.style.display = "none";
   }});
@@ -1991,6 +2031,8 @@ def control_panel_script(default_session_id: str) -> str:
     openStorageButton,
     runtimeLabel,
     runtimeInfo,
+    modelLabel,
+    modelSelect,
     processingCard,
   ]));
   contentLayout.appendChild(leftColumn);

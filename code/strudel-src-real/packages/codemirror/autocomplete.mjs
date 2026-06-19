@@ -3,8 +3,19 @@ import { autocompletion } from '@codemirror/autocomplete';
 import { h } from './html';
 //TODO: fix tonal scale import
 // import { Scale } from '@tonaljs/tonal';
-// import { soundMap } from '@strudel/webaudio';
+// soundMap is injected at runtime (see setAutocompleteSoundMap) instead of being
+// imported directly, so @strudel/codemirror keeps no dependency on @strudel/webaudio.
 let soundMap = undefined;
+export function setAutocompleteSoundMap(sm) {
+  soundMap = sm;
+}
+
+// Voice samples are registered as `<bank>_<text>` (e.g. "frases_bueno"). The editor
+// completes the bare text and auto-inserts the matching `.bank('...')`.
+const splitVoiceName = (name) => {
+  const i = name.indexOf('_');
+  return i < 0 ? { bank: '', base: name } : { bank: name.slice(0, i), base: name.slice(i + 1) };
+};
 import { complex } from '@strudel/tonal';
 
 const escapeHtml = (str) => {
@@ -141,6 +152,37 @@ export const getSynonymDoc = (doc, synonym) => {
   };
 };
 
+// Pattern values / continuous signals are used WITHOUT a call, so completing them
+// must not append "()". Everything else in the jsdoc set is a function or a chainable
+// method (delay, gain, note, bank, lpf, room, ...) and is far more useful with the
+// parentheses (and the caret) inserted for you.
+const NON_CALL_COMPLETIONS = new Set([
+  'silence',
+  'sine',
+  'cosine',
+  'saw',
+  'isaw',
+  'tri',
+  'square',
+  'pulse',
+  'rand',
+  'perlin',
+  'time',
+  'mousex',
+  'mousey',
+]);
+
+// Insert `name()` and drop the caret between the parens. If a "(" already follows
+// (e.g. re-completing an existing call), reuse it instead of doubling up.
+const applyFunctionCall = (name) => (view, _completion, from, to) => {
+  const hasParen = view.state.doc.sliceString(to, to + 1) === '(';
+  const insert = hasParen ? name : `${name}()`;
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: from + name.length + 1 },
+  });
+};
+
 const jsdocCompletions = (() => {
   const seen = new Set(); // avoid repetition
   const completions = [];
@@ -154,11 +196,15 @@ const jsdocCompletions = (() => {
       // https://codemirror.net/docs/ref/#autocomplete.Completion
       if (label && !seen.has(label)) {
         seen.add(label);
-        completions.push({
+        const completion = {
           label,
           info: () => Autocomplete(getSynonymDoc(doc, label)),
           type: 'function', // https://codemirror.net/docs/ref/#autocomplete.Completion.type
-        });
+        };
+        if (!NON_CALL_COMPLETIONS.has(label)) {
+          completion.apply = applyFunctionCall(label);
+        }
+        completions.push(completion);
       }
     }
   }
@@ -272,10 +318,35 @@ function soundHandler(context) {
   const inside = text.slice(quoteIdx + 1);
   const fragMatch = inside.match(SOUND_FRAGMENT_MATCH_REGEX);
   const fragment = fragMatch ? fragMatch[1] : inside;
-  const soundNames = Object.keys(soundMap?.get() ?? {}).sort();
-  const filteredSounds = soundNames.filter((name) => name.includes(fragment));
-  let options = filteredSounds.map((name) => ({ label: name, type: 'sound' }));
+  const soundDict = soundMap?.get() ?? {};
   const from = soundContext.to - fragment.length;
+  const options = [];
+  // Voice samples are keyed `<bank>_<text>`. Several banks can share the same text
+  // (e.g. "bueno" in both palabras and frases), so collapse them into one entry per
+  // bare text and list the banks in the detail. We insert ONLY the bare token — the
+  // bank is selected separately via .bank('...'), which also keeps it valid inside
+  // mini-notation like s("[bueno rato]*2").bank('frases').
+  const voiceBanksByBase = new Map();
+  for (const name of Object.keys(soundDict).sort()) {
+    if (name.startsWith('_')) continue;
+    const data = soundDict[name]?.data;
+    if (data?.tag === 'voice') {
+      const { bank, base } = splitVoiceName(name);
+      if (!base.includes(fragment)) continue;
+      if (!voiceBanksByBase.has(base)) voiceBanksByBase.set(base, new Set());
+      if (bank) voiceBanksByBase.get(base).add(bank);
+    } else {
+      if (!name.includes(fragment)) continue;
+      options.push({ label: name, type: 'sound' });
+    }
+  }
+  for (const [base, banks] of voiceBanksByBase) {
+    options.push({
+      label: base,
+      detail: Array.from(banks).sort().join(', '),
+      type: 'sound',
+    });
+  }
   return {
     from,
     options,

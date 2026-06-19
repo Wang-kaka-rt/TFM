@@ -134,6 +134,12 @@ def configure_runtime_defaults(logger: logging.Logger) -> None:
     defaults = {
         "STRUDEL_RECORDER_BACKEND": default_recorder_backend,
         "STRUDEL_TRANSCRIBER_BACKEND": "faster-whisper",
+        # Use the medium model for better accuracy on fast/colloquial speech. device
+        # and compute_type are "auto": on an NVIDIA GPU this runs on CUDA with float16,
+        # and on a CPU-only machine it falls back to CPU with int8 automatically.
+        "STRUDEL_FASTER_WHISPER_MODEL": "medium",
+        "STRUDEL_FASTER_WHISPER_DEVICE": "auto",
+        "STRUDEL_FASTER_WHISPER_COMPUTE_TYPE": "auto",
         "STRUDEL_VAD_BACKEND": "silero",
         "STRUDEL_ENABLE_VAD": "true",
         "STRUDEL_SAMPLES_ROOT": str(default_samples_root),

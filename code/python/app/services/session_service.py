@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 import time
 import wave
 from dataclasses import dataclass, field
@@ -326,6 +327,9 @@ class SessionService:
                 "ready": transcriber_ready,
                 "startup_blocked": not transcriber_ready,
                 "init_error": self._transcriber_init_error,
+                "device": getattr(self._transcriber, "device", None),
+                "compute_type": getattr(self._transcriber, "compute_type", None),
+                "model": getattr(self._transcriber, "model_name", None),
             },
             "audio": microphone,
             "storage": {
@@ -364,7 +368,51 @@ class SessionService:
             "word_count": self._manager.require(session_id).word_count,
         }
 
+    async def set_transcriber_model(self, model_name: str) -> dict[str, object]:
+        allowed = {"tiny", "base", "small", "medium", "large-v2", "large-v3"}
+        normalized = (model_name or "").strip()
+        if normalized not in allowed:
+            raise ValueError(f"unsupported model '{model_name}'")
+        # Reloading swaps the model in VRAM/RAM, which would corrupt an in-flight
+        # recording pipeline, so refuse while a capture loop is still running.
+        for runtime in self._runtimes.values():
+            if runtime.task is not None and not runtime.task.done():
+                raise RuntimeError("Detén la grabación antes de cambiar el modelo.")
+
+        def build() -> BaseTranscriber:
+            return create_transcriber(
+                "faster-whisper",
+                self._settings.mock_transcript_words,
+                faster_whisper_model=normalized,
+                faster_whisper_device=self._settings.faster_whisper_device,
+                faster_whisper_compute_type=self._settings.faster_whisper_compute_type,
+                faster_whisper_beam_size=self._settings.faster_whisper_beam_size,
+                transcriber_language=self._settings.transcriber_language,
+                transcriber_initial_prompt=self._settings.transcriber_initial_prompt,
+                transcriber_hotwords=self._settings.transcriber_hotwords,
+                faster_whisper_vad_filter=self._settings.faster_whisper_vad_filter,
+                faster_whisper_no_speech_threshold=self._settings.faster_whisper_no_speech_threshold,
+                faster_whisper_log_prob_threshold=self._settings.faster_whisper_log_prob_threshold,
+                faster_whisper_compression_ratio_threshold=self._settings.faster_whisper_compression_ratio_threshold,
+            )
+
+        async with self._lock:
+            # Build first; only swap in the new transcriber if it loaded successfully,
+            # so a failed download/load leaves the current model untouched.
+            new_transcriber = await asyncio.to_thread(build)
+            self._transcriber = new_transcriber
+            self._effective_transcriber_backend = "faster-whisper"
+            self._transcriber_init_error = None
+            self._settings.faster_whisper_model = normalized
+        return self.get_runtime_diagnostics()
+
     async def _record_session(self, runtime: SessionRuntime) -> None:
+        # Recording and transcription run on separate tasks connected by a queue.
+        # The capture loop records fixed chunks back-to-back and only ever enqueues
+        # them, so a slow transcription (e.g. a big model on CPU) builds a backlog
+        # instead of pausing the microphone. No spoken audio is dropped.
+        queue: asyncio.Queue = asyncio.Queue()
+        processor = asyncio.create_task(self._process_queue(runtime, queue))
         try:
             # max_chunks_per_session <= 0 means "unbounded": the session keeps
             # recording fixed-duration chunks until the client calls /stop.
@@ -389,13 +437,37 @@ class SessionService:
                 )
                 if audio_info.duration_seconds <= 0:
                     break
-                await self._process_chunk(runtime, audio_path, audio_info, chunk_index, start_time)
-                await asyncio.sleep(self._settings.session_poll_interval_seconds)
+                # Hand the chunk to the transcription worker and immediately loop
+                # back to record the next one — capture never waits for transcription.
+                await queue.put((audio_path, audio_info, chunk_index, start_time))
+                if processor.done():
+                    # Worker crashed; stop recording and surface the error below.
+                    break
 
+            await queue.put(None)  # sentinel: no more chunks to process
+            await processor  # drain the backlog before finalizing
             self._write_artifacts(runtime)
         except Exception as exc:  # pragma: no cover - runtime protection
+            runtime.stop_event.set()
+            if not processor.done():
+                await queue.put(None)
+                try:
+                    await processor
+                except Exception:
+                    pass
             self._manager.fail(runtime.session_id, str(exc))
             raise
+
+    async def _process_queue(self, runtime: SessionRuntime, queue: "asyncio.Queue") -> None:
+        # Pull recorded chunks and transcribe/slice them one at a time. Runs
+        # concurrently with the capture loop so transcription latency never stalls
+        # recording. A None item signals that recording has finished.
+        while True:
+            item = await queue.get()
+            if item is None:
+                return
+            audio_path, audio_info, chunk_index, start_time = item
+            await self._process_chunk(runtime, audio_path, audio_info, chunk_index, start_time)
 
     def _build_runtime(self, session_id: str) -> SessionRuntime:
         workspace_dir = self._settings.samples_root / session_id
@@ -547,9 +619,9 @@ class SessionService:
                 for chunk in runtime.chunks
             ],
         }
-        runtime.metadata_path.write_text(
+        _atomic_write_text(
+            runtime.metadata_path,
             json.dumps(metadata, ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
 
         samples = {
@@ -560,9 +632,9 @@ class SessionService:
             "sentences": sentence_samples,
             "letters": letter_samples,
         }
-        runtime.samples_path.write_text(
+        _atomic_write_text(
+            runtime.samples_path,
             json.dumps(samples, ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
 
         script = build_strudel_script(
@@ -573,7 +645,7 @@ class SessionService:
             sentence_samples=sentence_samples,
             letter_samples=letter_samples,
         )
-        runtime.strudel_script_path.write_text(script, encoding="utf-8")
+        _atomic_write_text(runtime.strudel_script_path, script)
 
         self._manager.update_counts(
             runtime.session_id,
@@ -726,6 +798,26 @@ class SessionService:
             exc_info=(type(exception), exception, exception.__traceback__),
         )
         self._manager.fail(runtime.session_id, str(exception))
+
+
+def _atomic_write_text(path: Path, data: str) -> None:
+    # Artifacts are rewritten on every processed chunk while the control panel
+    # polls them. Write to a sibling temp file and os.replace() it in, so a
+    # concurrent reader always sees a complete previous-or-next version of the
+    # file and never a half-written (truncated) one.
+    directory = path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(directory), prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(data)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def export_wav_slice(source_path: Path, target_path: Path, start_seconds: float, end_seconds: float) -> bool:

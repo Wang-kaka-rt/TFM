@@ -1,5 +1,6 @@
 import { Pattern, noteToMidi, valueToMidi } from '@strudel/core';
-import { aliasBank, registerSynthSounds, registerZZFXSounds, samples } from '@strudel/webaudio';
+import { aliasBank, registerSynthSounds, registerZZFXSounds, samples, soundMap } from '@strudel/webaudio';
+import { setAutocompleteSoundMap } from '@strudel/codemirror';
 import { registerSamplesFromDB } from './idbutils.mjs';
 import './piano.mjs';
 import './files.mjs';
@@ -159,6 +160,10 @@ export async function prebake() {
 
   // Expose samples() for the voice control panel to register recordings directly.
   window.strudelSamples = samples;
+
+  // Give the editor autocomplete a live reference to the sound registry so
+  // s('...') / .bank('...') can complete imported voice samples and banks.
+  setAutocompleteSoundMap(soundMap);
 }
 
 const maxPan = noteToMidi('C8');

@@ -15,6 +15,7 @@ export const soundFilterType = {
   SAMPLES: 'samples',
   SYNTHS: 'synths',
   WAVETABLES: 'wavetables',
+  VOICE: 'voice',
   ALL: 'all',
 };
 
@@ -39,7 +40,7 @@ export const defaultSettings = {
   isBracketClosingEnabled: true,
   isLineNumbersDisplayed: true,
   isActiveLineHighlighted: true,
-  isAutoCompletionEnabled: false,
+  isAutoCompletionEnabled: true,
   isTooltipEnabled: false,
   isFlashEnabled: true,
   isSyncEnabled: false,

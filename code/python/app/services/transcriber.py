@@ -22,6 +22,11 @@ class WordTiming:
 
 
 class BaseTranscriber:
+    # Resolved execution info for diagnostics; faster-whisper fills these in.
+    device: str | None = None
+    compute_type: str | None = None
+    model_name: str | None = None
+
     def transcribe(self, audio_path: Path, *, chunk_index: int) -> list[WordTiming]:
         raise NotImplementedError
 
@@ -71,6 +76,11 @@ class FasterWhisperTranscriber(BaseTranscriber):
                 "faster-whisper is not installed. Install it or use STRUDEL_TRANSCRIBER_BACKEND=mock."
             ) from exc
         self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        # Surface what ctranslate2 actually resolved (device="auto" -> cuda/cpu) for diagnostics.
+        inner = getattr(self._model, "model", None)
+        self.device = getattr(inner, "device", None) or (device if device != "auto" else None)
+        self.compute_type = getattr(inner, "compute_type", None) or compute_type
+        self.model_name = model_name
         self._beam_size = max(1, beam_size)
         self._language = language or None
         self._initial_prompt = initial_prompt or None

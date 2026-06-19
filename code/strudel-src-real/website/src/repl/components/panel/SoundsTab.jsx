@@ -14,6 +14,23 @@ import { prebake } from '@src/repl/prebake.mjs';
 const getSamples = (samples) =>
   Array.isArray(samples) ? samples.length : typeof samples === 'object' ? Object.values(samples).length : 1;
 
+// Voice samples are registered as `<bank>_<text>` (e.g. "frases_bueno") so the
+// original word/sentence is reachable via s('bueno').bank('frases'). The bank
+// prefix is only a routing key — in the UI we show the bare text grouped by bank.
+const VOICE_BANK_LABELS = {
+  oraciones: 'Oraciones',
+  frases: 'Frases',
+  palabras: 'Palabras',
+  letras: 'Letras',
+};
+const VOICE_BANK_ORDER = ['oraciones', 'frases', 'palabras', 'letras'];
+
+const parseVoiceName = (name) => {
+  const idx = name.indexOf('_');
+  if (idx < 0) return { bank: '', base: name };
+  return { bank: name.slice(0, idx), base: name.slice(idx + 1) };
+};
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -37,13 +54,18 @@ export function SoundsTab() {
       .filter(([name]) => name.toLowerCase().includes(search.toLowerCase()));
 
     if (soundsFilter === soundFilterType.USER) {
-      return filtered.filter(([_, { data }]) => !data.prebake);
+      return filtered.filter(([_, { data }]) => !data.prebake && data.tag !== 'voice');
     }
     if (soundsFilter === soundFilterType.DRUMS) {
       return filtered.filter(([_, { data }]) => data.type === 'sample' && data.tag === 'drum-machines');
     }
     if (soundsFilter === soundFilterType.SAMPLES) {
-      return filtered.filter(([_, { data }]) => data.type === 'sample' && data.tag !== 'drum-machines');
+      return filtered.filter(
+        ([_, { data }]) => data.type === 'sample' && data.tag !== 'drum-machines' && data.tag !== 'voice',
+      );
+    }
+    if (soundsFilter === soundFilterType.VOICE) {
+      return filtered.filter(([_, { data }]) => data.tag === 'voice');
     }
     if (soundsFilter === soundFilterType.SYNTHS) {
       return filtered.filter(([_, { data }]) => ['synth', 'soundfont'].includes(data.type));
@@ -76,6 +98,60 @@ export function SoundsTab() {
   useEvent('keyup', (e) => {
     numRef.current = 0;
   });
+
+  const renderSound = ([name, { data, onTrigger }]) => {
+    // Voice samples keep their `<bank>_<text>` registration key (used as `s`),
+    // but are shown by their bare text so the list reads "bueno", not "frases_bueno".
+    const displayName = data?.tag === 'voice' ? parseVoiceName(name).base : name;
+    return (
+      <span
+        key={name}
+        className="cursor-pointer hover:opacity-50"
+        onMouseDown={async () => {
+          const ctx = getAudioContext();
+          const params = {
+            note: ['synth', 'soundfont'].includes(data.type) ? 'a3' : undefined,
+            s: name,
+            n: numRef.current,
+            clip: 1,
+            release: 0.5,
+            sustain: 1,
+            duration: 0.5,
+          };
+          const onended = () => trigRef.current?.node?.disconnect();
+          // Attempt to play the sample and retry every 200ms until 10 attempts have been reached
+          let errMsg;
+          for (let attempt = 0; attempt < 10; attempt++) {
+            try {
+              // Pre-load the sample by calling onTrigger with a future time
+              // This triggers the loading but schedules playback for later
+              const time = ctx.currentTime + 0.05; // Give 50ms for loading
+              const ref = await onTrigger(time, params, onended);
+              trigRef.current = ref;
+              if (ref?.node) {
+                connectToDestination(ref.node);
+                break;
+              }
+            } catch (err) {
+              errMsg = err;
+            }
+            if (attempt == 9) {
+              console.warn('Failed to trigger sound after 10 attempts' + (errMsg ? `: ${errMsg}` : ''));
+            } else {
+              await wait(200);
+            }
+          }
+        }}
+      >
+        {' '}
+        {displayName}
+        {data?.type === 'sample' ? `(${getSamples(data.samples)})` : ''}
+        {data?.type === 'wavetable' ? `(${getSamples(data.tables)})` : ''}
+        {data?.type === 'soundfont' ? `(${data.fonts.length})` : ''}
+      </span>
+    );
+  };
+
   return (
     <div id="sounds-tab" className="flex flex-col w-full h-full text-foreground">
       <Textbox placeholder="Search..." className="border-0" value={search} onChange={(v) => setSearch(v)} />
@@ -91,6 +167,7 @@ export function SoundsTab() {
             synths: 'Synths',
             wavetables: 'Wavetables',
             user: 'User',
+            voice: 'voice',
             importSounds: 'import-sounds',
           }}
         ></ButtonGroup>
@@ -115,56 +192,47 @@ export function SoundsTab() {
         />
       )}
 
-      <div className="min-h-0 max-h-full grow overflow-auto break-normal p-2">
-        {soundEntries.map(([name, { data, onTrigger }]) => {
-          return (
-            <span
-              key={name}
-              className="cursor-pointer hover:opacity-50"
-              onMouseDown={async () => {
-                const ctx = getAudioContext();
-                const params = {
-                  note: ['synth', 'soundfont'].includes(data.type) ? 'a3' : undefined,
-                  s: name,
-                  n: numRef.current,
-                  clip: 1,
-                  release: 0.5,
-                  sustain: 1,
-                  duration: 0.5,
-                };
-                const onended = () => trigRef.current?.node?.disconnect();
-                // Attempt to play the sample and retry every 200ms until 10 attempts have been reached
-                let errMsg;
-                for (let attempt = 0; attempt < 10; attempt++) {
-                  try {
-                    // Pre-load the sample by calling onTrigger with a future time
-                    // This triggers the loading but schedules playback for later
-                    const time = ctx.currentTime + 0.05; // Give 50ms for loading
-                    const ref = await onTrigger(time, params, onended);
-                    trigRef.current = ref;
-                    if (ref?.node) {
-                      connectToDestination(ref.node);
-                      break;
-                    }
-                  } catch (err) {
-                    errMsg = err;
-                  }
-                  if (attempt == 9) {
-                    console.warn('Failed to trigger sound after 10 attempts' + (errMsg ? `: ${errMsg}` : ''));
-                  } else {
-                    await wait(200);
+      {soundsFilter === soundFilterType.VOICE && soundEntries.length > 0 && (
+        <ActionButton
+          className="pl-2"
+          label="delete-all"
+          onClick={async () => {
+            try {
+              const confirmed = await confirmDialog('Delete all imported voice samples?');
+              if (confirmed) {
+                // Drop only the voice-tagged sounds; leave drum machines / user samples intact.
+                const remaining = { ...soundMap.get() };
+                for (const key of Object.keys(remaining)) {
+                  if (remaining[key]?.data?.tag === 'voice') {
+                    delete remaining[key];
                   }
                 }
-              }}
-            >
-              {' '}
-              {name}
-              {data?.type === 'sample' ? `(${getSamples(data.samples)})` : ''}
-              {data?.type === 'wavetable' ? `(${getSamples(data.tables)})` : ''}
-              {data?.type === 'soundfont' ? `(${data.fonts.length})` : ''}
-            </span>
-          );
-        })}
+                soundMap.set(remaining);
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          }}
+        />
+      )}
+
+      <div className="min-h-0 max-h-full grow overflow-auto break-normal p-2">
+        {soundsFilter === soundFilterType.VOICE
+          ? VOICE_BANK_ORDER.map((bank) => {
+              const group = soundEntries.filter(([n]) => parseVoiceName(n).bank === bank);
+              if (!group.length) {
+                return null;
+              }
+              return (
+                <div key={bank} className="mb-3">
+                  <div className="font-bold text-foreground pb-1">
+                    {VOICE_BANK_LABELS[bank]} — bank('{bank}')
+                  </div>
+                  <div className="break-normal">{group.map(renderSound)}</div>
+                </div>
+              );
+            })
+          : soundEntries.map(renderSound)}
         {!soundEntries.length && soundsFilter === 'importSounds' ? (
           <div className="prose dark:prose-invert min-w-full text-sm">
             <ImportSoundsButton onComplete={() => settingsMap.setKey('soundsFilter', 'user')} />

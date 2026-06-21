@@ -192,33 +192,18 @@ def control_panel_script(default_session_id: str) -> str:
 
   const bottomModeWrap = document.createElement("div");
   Object.assign(bottomModeWrap.style, {{
-    minWidth: "160px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-    flexShrink: "0",
+    display: "none",
   }});
 
   const bottomModeLabel = document.createElement("label");
-  bottomModeLabel.textContent = "Modo";
+  bottomModeLabel.textContent = "";
   Object.assign(bottomModeLabel.style, {{
-    fontSize: "11px",
-    fontWeight: "700",
-    color: "#cbd5e1",
-    letterSpacing: "0.03em",
+    display: "none",
   }});
 
   const bottomModeSelect = document.createElement("select");
   Object.assign(bottomModeSelect.style, {{
-    width: "160px",
-    height: "34px",
-    padding: "0 10px",
-    borderRadius: "8px",
-    border: "1px solid #475569",
-    background: "#0f172a",
-    color: "#f8fafc",
-    boxSizing: "border-box",
-    fontSize: "14px",
+    display: "none",
   }});
 
   bottomRecordMeta.appendChild(bottomBankLabel);
@@ -629,26 +614,14 @@ def control_panel_script(default_session_id: str) -> str:
   processingCard.appendChild(processingWords);
 
   const modeLabel = document.createElement("label");
-  modeLabel.textContent = "Tipo de importacion";
+  modeLabel.textContent = "";
   Object.assign(modeLabel.style, {{
-    display: "block",
-    fontSize: "12px",
-    color: "#374151",
-    marginBottom: "6px",
+    display: "none",
   }});
 
   const modeSelect = document.createElement("select");
   Object.assign(modeSelect.style, {{
-    width: "100%",
-    border: "1px solid #d1d5db",
-    borderRadius: "8px",
-    padding: "8px 10px",
-    marginBottom: "12px",
-    boxSizing: "border-box",
-    backgroundColor: "#ffffff",
-    color: "#111827",
-    fontSize: "16px",
-    lineHeight: "22px",
+    display: "none",
   }});
   [
     ["sentences", "Oraciones"],
@@ -1067,7 +1040,10 @@ def control_panel_script(default_session_id: str) -> str:
   const buildSampleMap = (items) => {{
     const sampleMap = {{}};
     for (const item of items) {{
-      const key = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
+      let key = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
+      if (item.level === "letter") {{
+        key = "let_" + key;
+      }}
       if (!sampleMap[key]) {{
         sampleMap[key] = [];
       }}
@@ -1076,11 +1052,11 @@ def control_panel_script(default_session_id: str) -> str:
     return sampleMap;
   }};
 
-  const createImportSignature = (sessionId, mode, sampleMap) => {{
+  const createImportSignature = (sessionId, sampleMap) => {{
     const entries = Object.entries(sampleMap)
       .sort((a, b) => a[0].localeCompare(b[0], undefined, {{ sensitivity: "base" }}))
       .map(([key, urls]) => `${{key}}:${{urls.join("|")}}`);
-    return `${{sessionId}}::${{mode}}::${{entries.join("||")}}`;
+    return `${{sessionId}}::${{entries.join("||")}}`;
   }};
 
   const importSamplesIntoStrudel = async ({{ manifest = null, manual = false, force = false }} = {{}}) => {{
@@ -1094,7 +1070,6 @@ def control_panel_script(default_session_id: str) -> str:
       return false;
     }}
 
-    const selectedMode = modeSelect.value;
     const resolvedManifest = manifest || await fetchManifest(sessionId, !manual);
     if (!resolvedManifest) {{
       if (manual) {{
@@ -1105,8 +1080,15 @@ def control_panel_script(default_session_id: str) -> str:
       return false;
     }}
 
-    const items = Array.isArray(resolvedManifest?.[selectedMode]) ? resolvedManifest[selectedMode] : [];
-    if (!items.length) {{
+    const allModes = ["words", "phrases", "sentences", "letters"];
+    const allItems = [];
+    for (const mode of allModes) {{
+      const modeItems = Array.isArray(resolvedManifest[mode]) ? resolvedManifest[mode] : [];
+      for (const item of modeItems) {{
+        allItems.push(item);
+      }}
+    }}
+    if (!allItems.length) {{
       if (manual) {{
         throw new Error("No hay muestras disponibles. Graba primero y luego detén la sesion.");
       }}
@@ -1115,8 +1097,8 @@ def control_panel_script(default_session_id: str) -> str:
       return false;
     }}
 
-    const sampleMap = buildSampleMap(items);
-    const signature = createImportSignature(sessionId, selectedMode, sampleMap);
+    const sampleMap = buildSampleMap(allItems);
+    const signature = createImportSignature(sessionId, sampleMap);
     if (!force && state.autoImportSignature === signature) {{
       return false;
     }}
@@ -1129,12 +1111,11 @@ def control_panel_script(default_session_id: str) -> str:
     state.autoImportSignature = signature;
 
     const count = Object.keys(sampleMap).length;
-    const label = modeSelect.options[modeSelect.selectedIndex].text;
-    state.autoImportSummary = `${{count}} grupos de ${{label}} listos en Strudel.`;
+    state.autoImportSummary = `${{count}} muestras listas en Strudel.`;
     if (manual) {{
-      setStatus(`${{count}} muestras de ${{label}} listas. Usa s('nombre') en el editor.`);
+      setStatus(`${{count}} muestras listas. Usa s('nombre') en el editor.`);
     }} else if (state.autoImportEnabled) {{
-      setStatus(`Importacion automatica completada: ${{count}} grupos de ${{label}}.`);
+      setStatus(`Importacion automatica completada: ${{count}} muestras.`);
     }}
     return true;
   }};
@@ -1281,7 +1262,7 @@ def control_panel_script(default_session_id: str) -> str:
           await queueAutoImport({{ force: true }});
           state.autoImportEnabled = false;
           refreshControls();
-          setStatus(`Grabacion procesada. Las muestras se han importado automaticamente segun el modo seleccionado.`);
+          setStatus(`Grabacion procesada. Las muestras se han importado automaticamente.`);
           return;
         }}
         if (session.state === "failed") {{
@@ -1541,8 +1522,6 @@ def control_panel_script(default_session_id: str) -> str:
   const refreshControls = () => {{
     sessionInput.disabled = state.busy || state.isRecording;
     bottomBankInput.disabled = state.busy || state.isRecording;
-    modeSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
-    bottomModeSelect.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     openStorageButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     startButton.disabled = state.busy || state.isRecording || state.isUploading || state.isProcessing;
     stopButton.disabled = state.busy || !state.isRecording || state.isUploading || state.isProcessing;
@@ -1557,8 +1536,6 @@ def control_panel_script(default_session_id: str) -> str:
     }});
     bottomBankInput.style.opacity = bottomBankInput.disabled ? "0.6" : "1";
     bottomBankInput.style.cursor = bottomBankInput.disabled ? "not-allowed" : "text";
-    bottomModeSelect.style.opacity = bottomModeSelect.disabled ? "0.6" : "1";
-    bottomModeSelect.style.cursor = bottomModeSelect.disabled ? "not-allowed" : "pointer";
 
     openButton.style.opacity = state.busy ? "0.7" : "1";
     openButton.textContent = state.isRecording ? "voice rec" : "voice";
@@ -1581,7 +1558,7 @@ def control_panel_script(default_session_id: str) -> str:
     autoImportStatusTitle.style.color = state.isRecording || state.isUploading || state.isProcessing ? "#1d4ed8" : "#475569";
     if (state.isRecording) {{
       autoImportStatusText.textContent = "Importando automaticamente";
-      autoImportStatusHint.textContent = "Las nuevas conversiones se cargan en tiempo real segun el modo seleccionado.";
+      autoImportStatusHint.textContent = "Las nuevas conversiones se cargan en tiempo real.";
       autoImportStatusText.style.color = "#1e3a8a";
     }} else if (state.isUploading || state.isProcessing) {{
       autoImportStatusText.textContent = "Sincronizando conversiones";
@@ -1924,24 +1901,6 @@ def control_panel_script(default_session_id: str) -> str:
     renderPreviewWords();
   }});
 
-  modeSelect.addEventListener("change", () => {{
-    syncModeInputs(modeSelect.value, modeSelect);
-    state.autoImportSignature = "";
-    state.autoImportSummary = "";
-    if (state.autoImportEnabled) {{
-      void queueAutoImport({{ force: true }});
-    }}
-  }});
-
-  bottomModeSelect.addEventListener("change", () => {{
-    syncModeInputs(bottomModeSelect.value, bottomModeSelect);
-    state.autoImportSignature = "";
-    state.autoImportSummary = "";
-    if (state.autoImportEnabled) {{
-      void queueAutoImport({{ force: true }});
-    }}
-  }});
-
   closeButton.addEventListener("click", () => {{
     overlay.style.display = "none";
   }});
@@ -2003,7 +1962,6 @@ def control_panel_script(default_session_id: str) -> str:
   updateRecordingClock();
   renderPreviewWords();
   updatePanelLayout();
-  syncModeInputs(modeSelect.value);
   syncOpenButtonPlacement();
   syncBottomRecordBarPlacement();
   refreshControls();

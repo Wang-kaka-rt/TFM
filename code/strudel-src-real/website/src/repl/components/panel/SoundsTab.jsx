@@ -31,6 +31,18 @@ const parseVoiceName = (name) => {
   return { bank: name.slice(0, idx), base: name.slice(idx + 1) };
 };
 
+// "mix" samples are registered as one indexed list per level (e.g. the sound
+// "palabra" holds every word), so they are played as s("palabra:0"), s("frase:1")
+// without .bank(). The per-index Spanish text shown in the list is published by
+// the voice control panel on window.__strudelMixLabels keyed by level name.
+const MIX_LEVEL_LABELS = {
+  oracion: 'Oraciones',
+  frase: 'Frases',
+  palabra: 'Palabras',
+  letra: 'Letras',
+};
+const MIX_LEVEL_ORDER = ['oracion', 'frase', 'palabra', 'letra'];
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -54,18 +66,22 @@ export function SoundsTab() {
       .filter(([name]) => name.toLowerCase().includes(search.toLowerCase()));
 
     if (soundsFilter === soundFilterType.USER) {
-      return filtered.filter(([_, { data }]) => !data.prebake && data.tag !== 'voice');
+      return filtered.filter(([_, { data }]) => !data.prebake && data.tag !== 'voice' && data.tag !== 'mix');
     }
     if (soundsFilter === soundFilterType.DRUMS) {
       return filtered.filter(([_, { data }]) => data.type === 'sample' && data.tag === 'drum-machines');
     }
     if (soundsFilter === soundFilterType.SAMPLES) {
       return filtered.filter(
-        ([_, { data }]) => data.type === 'sample' && data.tag !== 'drum-machines' && data.tag !== 'voice',
+        ([_, { data }]) =>
+          data.type === 'sample' && data.tag !== 'drum-machines' && data.tag !== 'voice' && data.tag !== 'mix',
       );
     }
     if (soundsFilter === soundFilterType.VOICE) {
       return filtered.filter(([_, { data }]) => data.tag === 'voice');
+    }
+    if (soundsFilter === soundFilterType.MIX) {
+      return filtered.filter(([_, { data }]) => data.tag === 'mix');
     }
     if (soundsFilter === soundFilterType.SYNTHS) {
       return filtered.filter(([_, { data }]) => ['synth', 'soundfont'].includes(data.type));
@@ -99,6 +115,44 @@ export function SoundsTab() {
     numRef.current = 0;
   });
 
+  // Shared trigger: previews sample/synth `name` at sample index `n`. Mix items
+  // pass an explicit index; other tabs use the currently held number key.
+  const playSound = async (name, data, onTrigger, n) => {
+    const ctx = getAudioContext();
+    const params = {
+      note: ['synth', 'soundfont'].includes(data.type) ? 'a3' : undefined,
+      s: name,
+      n,
+      clip: 1,
+      release: 0.5,
+      sustain: 1,
+      duration: 0.5,
+    };
+    const onended = () => trigRef.current?.node?.disconnect();
+    // Attempt to play the sample and retry every 200ms until 10 attempts have been reached
+    let errMsg;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        // Pre-load the sample by calling onTrigger with a future time
+        // This triggers the loading but schedules playback for later
+        const time = ctx.currentTime + 0.05; // Give 50ms for loading
+        const ref = await onTrigger(time, params, onended);
+        trigRef.current = ref;
+        if (ref?.node) {
+          connectToDestination(ref.node);
+          break;
+        }
+      } catch (err) {
+        errMsg = err;
+      }
+      if (attempt == 9) {
+        console.warn('Failed to trigger sound after 10 attempts' + (errMsg ? `: ${errMsg}` : ''));
+      } else {
+        await wait(200);
+      }
+    }
+  };
+
   const renderSound = ([name, { data, onTrigger }]) => {
     // Voice samples keep their `<bank>_<text>` registration key (used as `s`),
     // but are shown by their bare text so the list reads "bueno", not "frases_bueno".
@@ -107,41 +161,7 @@ export function SoundsTab() {
       <span
         key={name}
         className="cursor-pointer hover:opacity-50"
-        onMouseDown={async () => {
-          const ctx = getAudioContext();
-          const params = {
-            note: ['synth', 'soundfont'].includes(data.type) ? 'a3' : undefined,
-            s: name,
-            n: numRef.current,
-            clip: 1,
-            release: 0.5,
-            sustain: 1,
-            duration: 0.5,
-          };
-          const onended = () => trigRef.current?.node?.disconnect();
-          // Attempt to play the sample and retry every 200ms until 10 attempts have been reached
-          let errMsg;
-          for (let attempt = 0; attempt < 10; attempt++) {
-            try {
-              // Pre-load the sample by calling onTrigger with a future time
-              // This triggers the loading but schedules playback for later
-              const time = ctx.currentTime + 0.05; // Give 50ms for loading
-              const ref = await onTrigger(time, params, onended);
-              trigRef.current = ref;
-              if (ref?.node) {
-                connectToDestination(ref.node);
-                break;
-              }
-            } catch (err) {
-              errMsg = err;
-            }
-            if (attempt == 9) {
-              console.warn('Failed to trigger sound after 10 attempts' + (errMsg ? `: ${errMsg}` : ''));
-            } else {
-              await wait(200);
-            }
-          }
-        }}
+        onMouseDown={() => playSound(name, data, onTrigger, numRef.current)}
       >
         {' '}
         {displayName}
@@ -149,6 +169,41 @@ export function SoundsTab() {
         {data?.type === 'wavetable' ? `(${getSamples(data.tables)})` : ''}
         {data?.type === 'soundfont' ? `(${data.fonts.length})` : ''}
       </span>
+    );
+  };
+
+  // Mix tab: each level ("oracion"/"frase"/"palabra"/"letra") is one sound whose
+  // samples array holds every clip at that level. We list them numbered from 0 so
+  // the shown index is exactly what goes into s("palabra:0").
+  const renderMixGroup = (key) => {
+    const entry = soundEntries.find(([name]) => name === key);
+    if (!entry) {
+      return null;
+    }
+    const [, { data, onTrigger }] = entry;
+    const urls = Array.isArray(data?.samples) ? data.samples : [];
+    if (!urls.length) {
+      return null;
+    }
+    const labels = (typeof window !== 'undefined' && window.__strudelMixLabels?.[key]) || [];
+    return (
+      <div key={key} className="mb-3">
+        <div className="font-bold text-foreground pb-1">
+          {MIX_LEVEL_LABELS[key]}：s("{key}:0")
+        </div>
+        <div className="break-normal">
+          {urls.map((_, index) => (
+            <span
+              key={index}
+              className="cursor-pointer hover:opacity-50"
+              onMouseDown={() => playSound(key, data, onTrigger, index)}
+            >
+              {' '}
+              {index}.{labels[index] ?? ''}
+            </span>
+          ))}
+        </div>
+      </div>
     );
   };
 
@@ -168,6 +223,7 @@ export function SoundsTab() {
             wavetables: 'Wavetables',
             user: 'User',
             voice: 'voice',
+            mix: 'mix',
             importSounds: 'import-sounds',
           }}
         ></ButtonGroup>
@@ -216,23 +272,51 @@ export function SoundsTab() {
         />
       )}
 
-      <div className="min-h-0 max-h-full grow overflow-auto break-normal p-2">
-        {soundsFilter === soundFilterType.VOICE
-          ? VOICE_BANK_ORDER.map((bank) => {
-              const group = soundEntries.filter(([n]) => parseVoiceName(n).bank === bank);
-              if (!group.length) {
-                return null;
+      {soundsFilter === soundFilterType.MIX && soundEntries.length > 0 && (
+        <ActionButton
+          className="pl-2"
+          label="delete-all"
+          onClick={async () => {
+            try {
+              const confirmed = await confirmDialog('Delete all imported mix samples?');
+              if (confirmed) {
+                // Drop only the mix-tagged sounds; leave other tabs intact.
+                const remaining = { ...soundMap.get() };
+                for (const key of Object.keys(remaining)) {
+                  if (remaining[key]?.data?.tag === 'mix') {
+                    delete remaining[key];
+                  }
+                }
+                soundMap.set(remaining);
               }
-              return (
-                <div key={bank} className="mb-3">
-                  <div className="font-bold text-foreground pb-1">
-                    {VOICE_BANK_LABELS[bank]} — bank('{bank}')
-                  </div>
-                  <div className="break-normal">{group.map(renderSound)}</div>
+            } catch (e) {
+              console.error(e);
+            }
+          }}
+        />
+      )}
+
+      <div className="min-h-0 max-h-full grow overflow-auto break-normal p-2">
+        {soundsFilter === soundFilterType.VOICE ? (
+          VOICE_BANK_ORDER.map((bank) => {
+            const group = soundEntries.filter(([n]) => parseVoiceName(n).bank === bank);
+            if (!group.length) {
+              return null;
+            }
+            return (
+              <div key={bank} className="mb-3">
+                <div className="font-bold text-foreground pb-1">
+                  {VOICE_BANK_LABELS[bank]} — bank('{bank}')
                 </div>
-              );
-            })
-          : soundEntries.map(renderSound)}
+                <div className="break-normal">{group.map(renderSound)}</div>
+              </div>
+            );
+          })
+        ) : soundsFilter === soundFilterType.MIX ? (
+          MIX_LEVEL_ORDER.map(renderMixGroup)
+        ) : (
+          soundEntries.map(renderSound)
+        )}
         {!soundEntries.length && soundsFilter === 'importSounds' ? (
           <div className="prose dark:prose-invert min-w-full text-sm">
             <ImportSoundsButton onComplete={() => settingsMap.setKey('soundsFilter', 'user')} />

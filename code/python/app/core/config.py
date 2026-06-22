@@ -92,6 +92,12 @@ class Settings(BaseSettings):
     whisperx_model: str = "small"
     whisperx_device: str = "cpu"
     whisperx_compute_type: str = "int8"
+    # Letter (character) slicing. When disabled, letters are cut by dividing each
+    # word's duration evenly across its characters. Enable with backend
+    # 'whisperx' to instead slice on real per-character boundaries from forced
+    # alignment; it reuses the whisperx_* settings and transcriber_language.
+    enable_letter_alignment: bool = False
+    letter_alignment_backend: str = "mock"
     mock_transcript_words: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

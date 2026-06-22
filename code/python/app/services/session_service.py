@@ -16,6 +16,7 @@ from app.core.config import Settings
 from app.core.session_manager import SessionManager
 from app.models.session import SessionInfo
 from app.services.aggregator import NlpAggregator
+from app.services.aligner import BaseAligner, CharTiming, create_aligner
 from app.services.denoiser import BaseDenoiser, create_denoiser
 from app.services.errors import SessionNotFoundError
 from app.services.recorder import (
@@ -72,6 +73,10 @@ class ChunkRecord:
     processing_latency_seconds: float = 0.0
     raw_word_count: int = 0
     words: list[WordTiming] = field(default_factory=list)
+    # Real per-character timings from forced alignment, index-aligned with
+    # ``words``. Empty when letter alignment is disabled/unavailable, in which
+    # case letters fall back to even time-division.
+    char_timings: list[list[CharTiming]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -183,6 +188,17 @@ class SessionService:
             whisperx_model=settings.whisperx_model,
             whisperx_device=settings.whisperx_device,
             whisperx_compute_type=settings.whisperx_compute_type,
+        )
+        self._aligner: BaseAligner = (
+            create_aligner(
+                settings.letter_alignment_backend,
+                whisperx_model=settings.whisperx_model,
+                whisperx_device=settings.whisperx_device,
+                whisperx_compute_type=settings.whisperx_compute_type,
+                language=settings.transcriber_language or "es",
+            )
+            if settings.enable_letter_alignment
+            else create_aligner("mock")
         )
         self._runtimes: dict[str, SessionRuntime] = {}
         self._lock = asyncio.Lock()
@@ -569,6 +585,10 @@ class SessionService:
             words=words,
         )
         runtime.chunks.append(chunk)
+        if words:
+            chunk.char_timings = await asyncio.to_thread(
+                self._aligner.align_characters, audio_path, words
+            )
         self._export_word_samples(runtime, chunk)
         self._write_artifacts(runtime)
 
@@ -680,6 +700,10 @@ class SessionService:
         for chunk in runtime.chunks:
             refined = self._refiner.refine(chunk.audio_path, chunk.words)
             chunk.words = refined if refined else chunk.words
+            # Word boundaries may have shifted; re-align characters so letter
+            # slices stay consistent with the refined word timings.
+            if chunk.words:
+                chunk.char_timings = self._aligner.align_characters(chunk.audio_path, chunk.words)
 
     def _collect_phrase_samples(self, runtime: SessionRuntime) -> list[dict[str, object]]:
         if not self._settings.enable_phrase_and_sentence_exports:
@@ -741,12 +765,28 @@ class SessionService:
                 characters = [char for char in word.word if char.strip()]
                 if not characters:
                     continue
+                # Prefer real per-character boundaries from forced alignment; only
+                # use them when they cover every character of this word, otherwise
+                # fall back to dividing the word duration evenly.
+                char_timings: list[CharTiming] | None = None
+                aligned = (
+                    chunk.char_timings[word_index - 1]
+                    if word_index - 1 < len(chunk.char_timings)
+                    else []
+                )
+                if len(aligned) == len(characters):
+                    char_timings = aligned
                 word_duration = max(0.01, word.end - word.start)
                 step = word_duration / len(characters)
                 for char_offset, char in enumerate(characters, start=1):
                     letter_index += 1
-                    start = round(word.start + (char_offset - 1) * step, 3)
-                    end = round(max(start + 0.01, word.start + char_offset * step), 3)
+                    if char_timings is not None:
+                        timing = char_timings[char_offset - 1]
+                        start = round(timing.start, 3)
+                        end = round(max(start + 0.01, timing.end), 3)
+                    else:
+                        start = round(word.start + (char_offset - 1) * step, 3)
+                        end = round(max(start + 0.01, word.start + char_offset * step), 3)
                     safe_char = "".join(c for c in char.lower() if c.isalnum() or c in ("-", "_")) or "x"
                     file_name = (
                         f"letter_{chunk.index:04d}_{word_index:02d}_{char_offset:02d}_{safe_char}.wav"

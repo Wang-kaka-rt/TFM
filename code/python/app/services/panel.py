@@ -89,7 +89,7 @@ def control_panel_script(default_session_id: str) -> str:
   document.head.appendChild(styleTag);
 
   const openButton = document.createElement("button");
-  openButton.textContent = "Voice";
+  openButton.textContent = "Panel";
   openButton.type = "button";
   Object.assign(openButton.style, {{
     display: "none",
@@ -1103,6 +1103,31 @@ def control_panel_script(default_session_id: str) -> str:
     ["letters", "letras", "Letras"],
   ];
 
+  // "mix" tab: every level becomes one indexed sound (Spanish singular name), so
+  // a clip is played as s("palabra:0") instead of via .bank(). The per-index text
+  // is published on window.__strudelMixLabels so the sounds panel can show the
+  // real Spanish word/sentence next to each 0-based index.
+  const MIX_LEVELS = [
+    ["sentences", "oracion"],
+    ["phrases", "frase"],
+    ["words", "palabra"],
+    ["letters", "letra"],
+  ];
+
+  const buildMixSampleMap = (manifest) => {{
+    const mix = {{}};
+    const labels = {{}};
+    for (const [level, key] of MIX_LEVELS) {{
+      const items = Array.isArray(manifest?.[level]) ? manifest[level] : [];
+      if (!items.length) {{
+        continue;
+      }}
+      mix[key] = items.map((item) => item.url);
+      labels[key] = items.map((item) => String(item.text || item.name || "").trim());
+    }}
+    return {{ mix, labels }};
+  }};
+
   const buildCombinedSampleMap = (manifest) => {{
     const combined = {{}};
     const perBankCounts = {{}};
@@ -1174,6 +1199,15 @@ def control_panel_script(default_session_id: str) -> str:
     // The "voice" tag lets Strudel's sounds panel group them under their own tab
     // and show the bare text (e.g. "bueno") instead of the "frases_bueno" key.
     await strudelSamples(combined, "", {{ tag: "voice" }});
+
+    // Register the same clips a second way for the "mix" tab: one indexed list
+    // per level, used as s("oracion:0") / s("frase:1") / s("palabra:2") /
+    // s("letra:3"). Labels are published first so the panel re-render can read them.
+    const {{ mix, labels }} = buildMixSampleMap(resolvedManifest);
+    if (Object.keys(mix).length) {{
+      window.__strudelMixLabels = labels;
+      await strudelSamples(mix, "", {{ tag: "mix" }});
+    }}
     state.autoImportSignature = signature;
 
     const summaryParts = LEVEL_BANKS
@@ -1610,7 +1644,7 @@ def control_panel_script(default_session_id: str) -> str:
     bottomBankInput.style.cursor = bottomBankInput.disabled ? "not-allowed" : "text";
 
     openButton.style.opacity = state.busy ? "0.7" : "1";
-    openButton.textContent = state.isRecording ? "voice rec" : "voice";
+    openButton.textContent = state.isRecording ? "panel rec" : "panel";
     openButton.style.background = "transparent";
     openButton.style.boxShadow = "none";
     openButton.style.color = state.isRecording ? "#fca5a5" : "#d1d5db";

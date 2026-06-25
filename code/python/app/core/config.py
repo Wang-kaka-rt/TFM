@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     ]
     samples_root: Path = PROJECT_ROOT / "samples"
     chunk_duration_seconds: float = 2.5
+    # Streaming silence-based segmentation (microphone backend only). When enabled,
+    # audio is sliced at natural pauses via an RMS energy gate instead of fixed
+    # `chunk_duration_seconds` windows, so words/sentences are not cut mid-utterance.
+    # Falls back to fixed-window slicing for the mock/browser backends.
+    streaming_segmentation: bool = True
+    segment_block_seconds: float = 0.03          # analysis frame size
+    segment_silence_rms: float = 0.008           # RMS below this counts as silence
+    segment_start_rms: float = 0.018             # onset threshold (hysteresis vs silence)
+    segment_hangover_seconds: float = 0.6        # trailing silence needed to close a segment
+    segment_max_duration_seconds: float = 8.0    # hard cap that bounds latency
+    segment_min_speech_seconds: float = 0.2      # ignore blips shorter than this
+    segment_preroll_seconds: float = 0.25        # audio kept before detected speech onset
     sample_rate: int = 16_000
     channels: int = 1
     recorder_backend: str = "mock"

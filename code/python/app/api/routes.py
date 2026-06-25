@@ -265,6 +265,51 @@ async def strudel_index(request: Request) -> Response:
     return HTMLResponse(html, media_type="text/html")
 
 
+# Strudel ships a Workbox service worker that precaches index.html and serves it
+# offline-first. That bypasses the server-side control-panel injection in
+# strudel_index (the cached page never gets the panel/Voice button). Override the
+# service worker endpoints so existing registrations self-destruct and no new
+# ones are created, ensuring every navigation hits the injecting route.
+_NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+
+_KILL_SWITCH_SW = """
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    } catch (error) {}
+    try {
+      await self.registration.unregister();
+    } catch (error) {}
+    const clients = await self.clients.matchAll({ type: "window" });
+    for (const client of clients) {
+      try { client.navigate(client.url); } catch (error) {}
+    }
+  })());
+});
+""".strip()
+
+
+@router.get("/sw.js", include_in_schema=False)
+async def service_worker_kill_switch() -> Response:
+    return Response(
+        content=_KILL_SWITCH_SW,
+        media_type="application/javascript",
+        headers=_NO_STORE,
+    )
+
+
+@router.get("/registerSW.js", include_in_schema=False)
+async def register_sw_noop() -> Response:
+    return Response(
+        content="/* service worker registration disabled by Strudel Voice */",
+        media_type="application/javascript",
+        headers=_NO_STORE,
+    )
+
+
 @router.get("/{asset_path:path}", include_in_schema=False)
 async def strudel_asset_fallback(asset_path: str) -> Response:
     asset = _resolve_strudel_asset(asset_path)

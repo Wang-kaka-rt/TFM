@@ -365,6 +365,12 @@ class SessionService:
         }
 
     async def _record_session(self, runtime: SessionRuntime) -> None:
+        # Streaming silence-based segmentation slices at natural pauses instead of
+        # fixed windows. Only the microphone backend implements record_segment;
+        # mock/browser fall back to the fixed-window loop below.
+        if self._settings.streaming_segmentation and hasattr(self._recorder, "record_segment"):
+            await self._record_session_streaming(runtime)
+            return
         try:
             # max_chunks_per_session <= 0 means "unbounded": the session keeps
             # recording fixed-duration chunks until the client calls /stop.
@@ -391,6 +397,51 @@ class SessionService:
                     break
                 await self._process_chunk(runtime, audio_path, audio_info, chunk_index, start_time)
                 await asyncio.sleep(self._settings.session_poll_interval_seconds)
+
+            self._write_artifacts(runtime)
+        except Exception as exc:  # pragma: no cover - runtime protection
+            self._manager.fail(runtime.session_id, str(exc))
+            raise
+
+    async def _record_session_streaming(self, runtime: SessionRuntime) -> None:
+        try:
+            max_chunks = self._settings.max_chunks_per_session
+            chunk_index = 0
+            while not runtime.stop_event.is_set():
+                # Reuse the same provisional filename until a segment actually
+                # contains speech, so empty (silence-only) reads do not pile up.
+                candidate_index = chunk_index + 1
+                file_name = f"{self._settings.mock_chunk_prefix}_{candidate_index:04d}.wav"
+                audio_path = runtime.raw_dir / file_name
+
+                start_time = time.perf_counter()
+                audio_info = await asyncio.to_thread(
+                    self._recorder.record_segment,
+                    audio_path,
+                    sample_rate=self._settings.sample_rate,
+                    channels=self._settings.channels,
+                    chunk_index=candidate_index,
+                    stop_requested=runtime.stop_event.is_set,
+                    silence_rms=self._settings.segment_silence_rms,
+                    start_rms=self._settings.segment_start_rms,
+                    hangover_seconds=self._settings.segment_hangover_seconds,
+                    max_duration_seconds=self._settings.segment_max_duration_seconds,
+                    min_speech_seconds=self._settings.segment_min_speech_seconds,
+                    preroll_seconds=self._settings.segment_preroll_seconds,
+                    block_seconds=self._settings.segment_block_seconds,
+                )
+
+                # No speech captured: either the session was stopped while waiting,
+                # or a spurious onset was discarded. Stop if asked, else keep listening.
+                if audio_info.duration_seconds <= 0:
+                    if runtime.stop_event.is_set():
+                        break
+                    continue
+
+                chunk_index = candidate_index
+                if max_chunks > 0 and chunk_index > max_chunks:
+                    break
+                await self._process_chunk(runtime, audio_path, audio_info, chunk_index, start_time)
 
             self._write_artifacts(runtime)
         except Exception as exc:  # pragma: no cover - runtime protection

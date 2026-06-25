@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import struct
 import wave
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -167,6 +168,124 @@ class MicrophoneRecorder(BaseRecorder):
             sample_width=2,
         )
 
+    def record_segment(
+        self,
+        output_path: Path,
+        *,
+        sample_rate: int,
+        channels: int,
+        chunk_index: int,
+        stop_requested: Callable[[], bool] | None = None,
+        silence_rms: float = 0.008,
+        start_rms: float = 0.018,
+        hangover_seconds: float = 0.6,
+        max_duration_seconds: float = 8.0,
+        min_speech_seconds: float = 0.2,
+        preroll_seconds: float = 0.25,
+        block_seconds: float = 0.03,
+    ) -> ChunkAudioInfo:
+        """Capture a single speech segment bounded by silence.
+
+        Reads short analysis blocks continuously and uses an RMS energy gate to
+        slice the stream at natural pauses instead of at fixed time windows, so a
+        word or sentence is never cut mid-utterance. Returns when either:
+          * speech is detected and followed by >= ``hangover_seconds`` of silence,
+          * the segment reaches ``max_duration_seconds`` (latency upper bound), or
+          * ``stop_requested`` becomes true.
+
+        A returned ``duration_seconds`` of 0.0 means no speech was captured (e.g.
+        the session was stopped while waiting), and the caller should not process
+        or persist it.
+        """
+        block_size = max(1, int(block_seconds * sample_rate))
+        # Use a slightly higher onset threshold than the silence threshold so a
+        # brief noise spike does not start a segment (hysteresis).
+        start_threshold = max(start_rms, silence_rms)
+        hangover_blocks = max(1, math.ceil(hangover_seconds / block_seconds))
+        max_blocks = max(1, math.ceil(max_duration_seconds / block_seconds))
+        min_speech_blocks = max(1, math.ceil(min_speech_seconds / block_seconds))
+        preroll_maxlen = max(0, int(preroll_seconds / block_seconds))
+
+        preroll: deque[bytes] = deque(maxlen=preroll_maxlen)
+        captured = bytearray()
+        speech_started = False
+        speech_blocks = 0
+        trailing_silence_blocks = 0
+        captured_blocks = 0
+
+        with self._sounddevice.RawInputStream(
+            samplerate=sample_rate,
+            channels=channels,
+            dtype="int16",
+            device=self._device,
+            blocksize=block_size,
+        ) as stream:
+            while True:
+                if stop_requested is not None and stop_requested():
+                    break
+
+                buffer, _overflowed = stream.read(block_size)
+                block_bytes = bytes(buffer)
+                rms = _rms_of_pcm16(block_bytes)
+
+                if not speech_started:
+                    preroll.append(block_bytes)
+                    if rms >= start_threshold:
+                        speech_started = True
+                        for pending in preroll:
+                            captured.extend(pending)
+                        captured_blocks = len(preroll)
+                        preroll.clear()
+                        speech_blocks = 1
+                        trailing_silence_blocks = 0
+                    continue
+
+                captured.extend(block_bytes)
+                captured_blocks += 1
+                if rms >= silence_rms:
+                    speech_blocks += 1
+                    trailing_silence_blocks = 0
+                else:
+                    trailing_silence_blocks += 1
+
+                # Enough speech followed by a real pause -> a clean segment.
+                if speech_blocks >= min_speech_blocks and trailing_silence_blocks >= hangover_blocks:
+                    break
+                # The onset was just noise (never reached the speech minimum) and
+                # silence has returned: discard and resume listening.
+                if speech_blocks < min_speech_blocks and trailing_silence_blocks >= hangover_blocks:
+                    captured.clear()
+                    captured_blocks = 0
+                    speech_started = False
+                    speech_blocks = 0
+                    trailing_silence_blocks = 0
+                    continue
+                # Latency cap: force a cut even without a pause.
+                if captured_blocks >= max_blocks:
+                    break
+
+        if not speech_started or speech_blocks < min_speech_blocks:
+            return ChunkAudioInfo(
+                duration_seconds=0.0,
+                sample_rate=sample_rate,
+                channels=channels,
+                sample_width=2,
+            )
+
+        with wave.open(str(output_path), "wb") as wav_file:
+            wav_file.setnchannels(channels)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(bytes(captured))
+
+        captured_frames = len(captured) // (channels * 2)
+        return ChunkAudioInfo(
+            duration_seconds=captured_frames / sample_rate,
+            sample_rate=sample_rate,
+            channels=channels,
+            sample_width=2,
+        )
+
     def _resolve_selected_device(self) -> int | None:
         if self._device is not None:
             return self._device
@@ -250,6 +369,17 @@ def get_wav_audio_info(audio_path: Path) -> ChunkAudioInfo:
         channels=channels,
         sample_width=sample_width,
     )
+
+
+def _rms_of_pcm16(data: bytes) -> float:
+    """Normalized RMS amplitude (0..1) of a 16-bit little-endian PCM block."""
+    count = len(data) // 2
+    if count == 0:
+        return 0.0
+    total = 0
+    for (sample,) in struct.iter_unpack("<h", data[: count * 2]):
+        total += sample * sample
+    return min(1.0, math.sqrt(total / count) / 32768.0)
 
 
 def get_wav_rms(audio_path: Path) -> float:

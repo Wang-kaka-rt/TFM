@@ -1,25 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_data_files, collect_all
 
-datas = [('D:\\D盘桌面程序\\作业\\UAM毕业论文\\TFM\\code\\python\\build\\portaudio-binaries-alias\\libportaudioarm64.dll', '_sounddevice_data\\portaudio-binaries'), ('static', 'static')]
+datas = [('static', 'static')]
 binaries = []
-hiddenimports = ['sounddevice', '_cffi_backend', 'uvicorn', 'uvicorn.config', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'webview', 'app.main', 'app.api.routes', 'faster_whisper', 'ctranslate2', 'tokenizers', 'huggingface_hub', 'av']
+hiddenimports = ['uvicorn', 'uvicorn.config', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'app.main', 'app.api.routes', 'faster_whisper', 'ctranslate2', 'tokenizers', 'silero_vad', 'huggingface_hub', 'av', 'sounddevice', '_cffi_backend']
+
 datas += collect_data_files('app')
-tmp_ret = collect_all('sounddevice')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('_sounddevice_data')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('faster_whisper')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('ctranslate2')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('tokenizers')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# Collect package data files plus native shared libraries (.dylib/.so/portaudio)
+# that are NOT picked up by hiddenimports alone.
+for _pkg in ('faster_whisper', 'ctranslate2', 'tokenizers', 'silero_vad', 'av', 'sounddevice', '_sounddevice_data'):
+    _datas, _binaries, _hidden = collect_all(_pkg)
+    datas += _datas
+    binaries += _binaries
+    hiddenimports += _hidden
 
 
 a = Analysis(
-    ['packaging\\launcher.py'],
+    ['packaging/launcher.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -27,7 +25,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch', 'whisperx', 'tensorflow', 'keras', 'tf_keras', 'pandas', 'pyarrow', 'scipy', 'sklearn', 'cv2', 'numba', 'llvmlite', 'matplotlib', 'IPython', 'jupyter_client', 'pytest'],
+    excludes=['torch', 'whisperx', 'tensorflow', 'keras', 'pandas', 'scipy', 'sklearn', 'cv2', 'numba', 'matplotlib', 'IPython', 'jupyter_client', 'pytest'],
     noarchive=False,
     optimize=0,
 )

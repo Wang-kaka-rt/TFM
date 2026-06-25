@@ -595,6 +595,46 @@ def control_panel_script(default_session_id: str) -> str:
     scrollbarGutter: "stable",
   }});
 
+  const insertCodeAtCursor = (code) => {{
+    // Preferred path: Strudel exposes its CodeMirror 6 editor as
+    // window.strudelMirror; insert at the current cursor via replaceSelection.
+    const mirror = window.strudelMirror;
+    const view = mirror
+      ? (mirror.editor && typeof mirror.editor.dispatch === "function"
+          ? mirror.editor
+          : (typeof mirror.dispatch === "function" ? mirror : null))
+      : null;
+    if (view && view.state && typeof view.state.replaceSelection === "function") {{
+      view.focus();
+      view.dispatch(view.state.replaceSelection(code), {{ scrollIntoView: true }});
+      return true;
+    }}
+    // Fallback 1: insert into the focused CodeMirror contenteditable.
+    const content = document.querySelector(".cm-content");
+    if (content) {{
+      content.focus();
+      try {{
+        if (document.execCommand("insertText", false, code)) {{
+          return true;
+        }}
+      }} catch (_error) {{}}
+    }}
+    // Fallback 2: plain textarea editors.
+    const textarea = document.querySelector("textarea");
+    if (textarea) {{
+      const start = textarea.selectionStart != null ? textarea.selectionStart : textarea.value.length;
+      const end = textarea.selectionEnd != null ? textarea.selectionEnd : textarea.value.length;
+      textarea.value = textarea.value.slice(0, start) + code + textarea.value.slice(end);
+      const caret = start + code.length;
+      textarea.selectionStart = caret;
+      textarea.selectionEnd = caret;
+      textarea.dispatchEvent(new Event("input", {{ bubbles: true }}));
+      textarea.focus();
+      return true;
+    }}
+    return false;
+  }};
+
   const renderPreviewWords = () => {{
     processingWords.replaceChildren();
     const hasWords = state.previewWords.length > 0;
@@ -624,7 +664,6 @@ def control_panel_script(default_session_id: str) -> str:
 
     state.previewWords.forEach((item) => {{
       const chip = document.createElement("div");
-      chip.textContent = `${{item.text}}(${{item.count}})`;
       Object.assign(chip.style, {{
         display: "flex",
         alignItems: "center",
@@ -643,7 +682,41 @@ def control_panel_script(default_session_id: str) -> str:
         whiteSpace: "nowrap",
         overflow: "hidden",
         textOverflow: "ellipsis",
+        cursor: "pointer",
+        userSelect: "none",
       }});
+
+      const name = document.createElement("span");
+      name.textContent = item.text;
+      chip.appendChild(name);
+
+      // Identical words are merged into one sample group. Keep a single chip but
+      // mark the index range so the user knows the repeats are addressed as
+      // s("hola:0"), s("hola:1"), ... in the editor.
+      if (item.count > 1) {{
+        const marker = document.createElement("span");
+        marker.textContent = `:0–:${{item.count - 1}}`;
+        Object.assign(marker.style, {{
+          marginLeft: "4px",
+          fontSize: "10px",
+          fontWeight: "600",
+          color: "#9ca3af",
+        }});
+        chip.appendChild(marker);
+      }}
+
+      // Clicking inserts the sample call at the editor cursor, defaulting to
+      // index 0 -> s("hola:0").
+      const snippet = `s("${{item.text}}:0")`;
+      chip.title = `Insertar ${{snippet}} en el cursor`;
+      chip.addEventListener("click", () => {{
+        if (insertCodeAtCursor(snippet)) {{
+          setStatus(`Insertado ${{snippet}} en el editor.`);
+        }} else {{
+          setStatus("No se encontro el editor de codigo para insertar.", true);
+        }}
+      }});
+
       processingWords.appendChild(chip);
     }});
   }};

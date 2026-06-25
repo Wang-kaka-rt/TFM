@@ -52,6 +52,7 @@ def test_session_service_generates_artifacts(tmp_path):
         session_poll_interval_seconds=0.01,
         recorder_backend="mock",
         transcriber_backend="mock",
+        mock_transcript_words=["hola", "ritmo", "voz"],
     )
     service = SessionService(settings)
 
@@ -210,6 +211,7 @@ def test_browser_recorder_backend_accepts_uploaded_chunks(tmp_path):
             samples_root=tmp_path / "samples",
             recorder_backend="browser",
             transcriber_backend="mock",
+            mock_transcript_words=["hola", "ritmo", "voz"],
         )
     )
 

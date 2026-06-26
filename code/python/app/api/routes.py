@@ -212,7 +212,7 @@ async def get_samples_manifest(session_id: str) -> Response:
 @router.get("/samples/{session_id}/{sample_group}/{file_name}", tags=["artifacts"])
 async def get_sample_file(
     session_id: str,
-    sample_group: str = ApiPath(pattern="^(sentences|phrases|words|letters)$"),
+    sample_group: str = ApiPath(pattern="^(sentences|phrases|words|syllables|letters)$"),
     file_name: str = ApiPath(pattern=r"^[\w.-]+\.wav$"),
 ) -> FileResponse:
     root = session_service._settings.samples_root.resolve()

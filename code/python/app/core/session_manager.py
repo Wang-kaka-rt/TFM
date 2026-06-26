@@ -23,6 +23,7 @@ class SessionManager:
             "words_dir": paths["words_dir"],
             "phrases_dir": paths["phrases_dir"],
             "sentences_dir": paths["sentences_dir"],
+            "syllables_dir": paths["syllables_dir"],
             "letters_dir": paths["letters_dir"],
             "metadata_path": paths["metadata_path"],
             "samples_path": paths["samples_path"],
@@ -46,6 +47,7 @@ class SessionManager:
                     "word_count": 0,
                     "phrase_count": 0,
                     "sentence_count": 0,
+                    "syllable_count": 0,
                     "letter_count": 0,
                 }
             )
@@ -111,6 +113,7 @@ class SessionManager:
         word_count: int,
         phrase_count: int,
         sentence_count: int,
+        syllable_count: int = 0,
         letter_count: int,
     ) -> SessionInfo:
         session = self.require(session_id)
@@ -121,6 +124,7 @@ class SessionManager:
                 "word_count": word_count,
                 "phrase_count": phrase_count,
                 "sentence_count": sentence_count,
+                "syllable_count": syllable_count,
                 "letter_count": letter_count,
             }
         )

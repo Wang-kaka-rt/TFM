@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     mock_chunk_prefix: str = "chunk"
     max_chunks_per_session: int = 0
     enable_phrase_and_sentence_exports: bool = True
+    # Syllable-level slicing (between words and letters). Each word is split into
+    # Spanish syllables and the word audio is cut at syllable boundaries, reusing
+    # forced-alignment character timings when available, else proportional timing.
+    enable_syllable_exports: bool = True
     strudel_base_url: str = "http://127.0.0.1:8787"
     session_poll_interval_seconds: float = 0.05
     transcriber_backend: str = "mock"

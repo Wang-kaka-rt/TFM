@@ -28,6 +28,7 @@ from app.services.recorder import (
     get_wav_rms,
 )
 from app.services.refiner import BaseRefiner, create_refiner
+from app.services.syllabifier import syllabify
 from app.services.transcriber import BaseTranscriber, WordTiming, create_transcriber
 from app.services.vad import BaseVoiceActivityDetector, create_vad
 
@@ -88,6 +89,7 @@ class SessionRuntime:
     words_dir: Path
     phrases_dir: Path
     sentences_dir: Path
+    syllables_dir: Path
     letters_dir: Path
     metadata_path: Path
     samples_path: Path
@@ -248,6 +250,7 @@ class SessionService:
                     "words_dir": str(runtime.words_dir),
                     "phrases_dir": str(runtime.phrases_dir),
                     "sentences_dir": str(runtime.sentences_dir),
+                    "syllables_dir": str(runtime.syllables_dir),
                     "letters_dir": str(runtime.letters_dir),
                     "metadata_path": str(runtime.metadata_path),
                     "samples_path": str(runtime.samples_path),
@@ -548,6 +551,7 @@ class SessionService:
             words_dir=workspace_dir / "words",
             phrases_dir=workspace_dir / "phrases",
             sentences_dir=workspace_dir / "sentences",
+            syllables_dir=workspace_dir / "syllables",
             letters_dir=workspace_dir / "letters",
             metadata_path=workspace_dir / "metadata.json",
             samples_path=workspace_dir / "samples.json",
@@ -563,6 +567,7 @@ class SessionService:
         runtime.words_dir.mkdir(parents=True, exist_ok=True)
         runtime.phrases_dir.mkdir(parents=True, exist_ok=True)
         runtime.sentences_dir.mkdir(parents=True, exist_ok=True)
+        runtime.syllables_dir.mkdir(parents=True, exist_ok=True)
         runtime.letters_dir.mkdir(parents=True, exist_ok=True)
         runtime.chunks.clear()
         runtime.stop_event = asyncio.Event()
@@ -656,6 +661,7 @@ class SessionService:
         word_samples = self._collect_word_samples(runtime)
         phrase_samples = self._collect_phrase_samples(runtime)
         sentence_samples = self._collect_sentence_samples(runtime)
+        syllable_samples = self._collect_syllable_samples(runtime)
         letter_samples = self._collect_letter_samples(runtime)
 
         metadata = {
@@ -702,6 +708,7 @@ class SessionService:
             "words": word_samples,
             "phrases": phrase_samples,
             "sentences": sentence_samples,
+            "syllables": syllable_samples,
             "letters": letter_samples,
         }
         _atomic_write_text(
@@ -715,6 +722,7 @@ class SessionService:
             word_samples=word_samples,
             phrase_samples=phrase_samples,
             sentence_samples=sentence_samples,
+            syllable_samples=syllable_samples,
             letter_samples=letter_samples,
         )
         _atomic_write_text(runtime.strudel_script_path, script)
@@ -725,6 +733,7 @@ class SessionService:
             word_count=len(word_samples),
             phrase_count=len(phrase_samples),
             sentence_count=len(sentence_samples),
+            syllable_count=len(syllable_samples),
             letter_count=len(letter_samples),
         )
 
@@ -807,6 +816,63 @@ class SessionService:
                     "url": f"{self._settings.strudel_base_url}/samples/{runtime.session_id}/sentences/{file_name}",
                 }
             )
+        return items
+
+    def _collect_syllable_samples(self, runtime: SessionRuntime) -> list[dict[str, object]]:
+        if not self._settings.enable_syllable_exports:
+            return []
+        items: list[dict[str, object]] = []
+        syllable_index = 0
+        for chunk in runtime.chunks:
+            for word_index, word in enumerate(chunk.words, start=1):
+                syllables = syllabify(word.word)
+                if not syllables:
+                    continue
+                # Reuse forced-alignment character timings when they cover every
+                # character of the word AND line up with the syllable letters;
+                # otherwise divide the word duration proportionally by syllable
+                # length so longer syllables get more time.
+                characters = [c for c in word.word if c.strip()]
+                aligned = (
+                    chunk.char_timings[word_index - 1]
+                    if word_index - 1 < len(chunk.char_timings)
+                    else []
+                )
+                total_chars = sum(len(s) for s in syllables) or 1
+                use_aligned = len(aligned) == len(characters) == total_chars
+                word_duration = max(0.01, word.end - word.start)
+                char_cursor = 0
+                for syl_offset, syllable in enumerate(syllables, start=1):
+                    syllable_index += 1
+                    syl_len = len(syllable)
+                    if use_aligned:
+                        start = round(aligned[char_cursor].start, 3)
+                        end = round(max(start + 0.01, aligned[char_cursor + syl_len - 1].end), 3)
+                    else:
+                        start = round(word.start + (char_cursor / total_chars) * word_duration, 3)
+                        end = round(
+                            max(start + 0.01, word.start + ((char_cursor + syl_len) / total_chars) * word_duration),
+                            3,
+                        )
+                    char_cursor += syl_len
+                    safe = "".join(c for c in syllable.lower() if c.isalnum() or c in ("-", "_")) or "x"
+                    file_name = (
+                        f"syllable_{chunk.index:04d}_{word_index:02d}_{syl_offset:02d}_{safe}.wav"
+                    )
+                    export_wav_slice(chunk.audio_path, runtime.syllables_dir / file_name, start, end)
+                    items.append(
+                        {
+                            "name": f"{syllable}_{syllable_index:04d}",
+                            "text": syllable,
+                            "level": "syllable",
+                            "chunk_index": chunk.index,
+                            "start": start,
+                            "end": end,
+                            "duration_seconds": round(end - start, 3),
+                            "path": f"syllables/{file_name}",
+                            "url": f"{self._settings.strudel_base_url}/samples/{runtime.session_id}/syllables/{file_name}",
+                        }
+                    )
         return items
 
     def _collect_letter_samples(self, runtime: SessionRuntime) -> list[dict[str, object]]:
@@ -950,6 +1016,7 @@ def build_strudel_script(
     word_samples: list[dict[str, object]],
     phrase_samples: list[dict[str, object]],
     sentence_samples: list[dict[str, object]],
+    syllable_samples: list[dict[str, object]] | None = None,
     letter_samples: list[dict[str, object]],
 ) -> str:
     payload = {
@@ -958,6 +1025,7 @@ def build_strudel_script(
             "words": word_samples,
             "phrases": phrase_samples,
             "sentences": sentence_samples,
+            "syllables": syllable_samples or [],
             "letters": letter_samples,
         },
     }

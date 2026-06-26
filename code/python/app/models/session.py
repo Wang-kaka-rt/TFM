@@ -51,11 +51,13 @@ class SessionInfo(BaseModel):
     words_dir: str | None = None
     phrases_dir: str | None = None
     sentences_dir: str | None = None
+    syllables_dir: str | None = None
     letters_dir: str | None = None
     chunk_count: int = 0
     word_count: int = 0
     phrase_count: int = 0
     sentence_count: int = 0
+    syllable_count: int = 0
     letter_count: int = 0
     metadata_path: str | None = None
     samples_path: str | None = None

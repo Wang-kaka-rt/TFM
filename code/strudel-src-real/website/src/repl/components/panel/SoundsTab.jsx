@@ -21,9 +21,10 @@ const VOICE_BANK_LABELS = {
   oraciones: 'Oraciones',
   frases: 'Frases',
   palabras: 'Palabras',
+  silabas: 'Sílabas',
   letras: 'Letras',
 };
-const VOICE_BANK_ORDER = ['oraciones', 'frases', 'palabras', 'letras'];
+const VOICE_BANK_ORDER = ['oraciones', 'frases', 'palabras', 'silabas', 'letras'];
 
 const parseVoiceName = (name) => {
   const idx = name.indexOf('_');
@@ -39,9 +40,10 @@ const MIX_LEVEL_LABELS = {
   oracion: 'Oraciones',
   frase: 'Frases',
   palabra: 'Palabras',
+  silaba: 'Sílabas',
   letra: 'Letras',
 };
-const MIX_LEVEL_ORDER = ['oracion', 'frase', 'palabra', 'letra'];
+const MIX_LEVEL_ORDER = ['oracion', 'frase', 'palabra', 'silaba', 'letra'];
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -153,6 +155,56 @@ export function SoundsTab() {
     }
   };
 
+  // Double-click a sound to drop its s("...") call at the editor cursor.
+  // Mirrors the voice control panel's insert logic: prefer Strudel's CodeMirror 6
+  // view (window.strudelMirror), then fall back to the focused .cm-content, then a
+  // plain textarea. Single-click still previews; double-click inserts.
+  const insertAtCursor = (code) => {
+    const mirror = typeof window !== 'undefined' ? window.strudelMirror : null;
+    const view = mirror
+      ? mirror.editor && typeof mirror.editor.dispatch === 'function'
+        ? mirror.editor
+        : typeof mirror.dispatch === 'function'
+          ? mirror
+          : null
+      : null;
+    if (view && view.state && typeof view.state.replaceSelection === 'function') {
+      view.focus();
+      view.dispatch(view.state.replaceSelection(code), { scrollIntoView: true });
+      return true;
+    }
+    const content = document.querySelector('.cm-content');
+    if (content) {
+      content.focus();
+      try {
+        if (document.execCommand('insertText', false, code)) {
+          return true;
+        }
+      } catch (_error) {}
+    }
+    const textarea = document.querySelector('textarea');
+    if (textarea) {
+      const start = textarea.selectionStart != null ? textarea.selectionStart : textarea.value.length;
+      const end = textarea.selectionEnd != null ? textarea.selectionEnd : textarea.value.length;
+      textarea.value = textarea.value.slice(0, start) + code + textarea.value.slice(end);
+      const caret = start + code.length;
+      textarea.selectionStart = caret;
+      textarea.selectionEnd = caret;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.focus();
+      return true;
+    }
+    return false;
+  };
+
+  // Insert at cursor and clear the text selection the double-click leaves behind.
+  const insertSnippet = (code) => {
+    insertAtCursor(code);
+    if (typeof window !== 'undefined') {
+      window.getSelection?.()?.removeAllRanges();
+    }
+  };
+
   const renderSound = ([name, { data, onTrigger }]) => {
     // Voice samples keep their `<bank>_<text>` registration key (used as `s`),
     // but are shown by their bare text so the list reads "bueno", not "frases_bueno".
@@ -161,7 +213,9 @@ export function SoundsTab() {
       <span
         key={name}
         className="cursor-pointer hover:opacity-50"
+        title={`Click: probar · Doble clic: insertar s("${displayName}")`}
         onMouseDown={() => playSound(name, data, onTrigger, numRef.current)}
+        onDoubleClick={() => insertSnippet(`s("${displayName}")`)}
       >
         {' '}
         {displayName}
@@ -196,7 +250,9 @@ export function SoundsTab() {
             <span
               key={index}
               className="cursor-pointer hover:opacity-50"
+              title={`Click: probar · Doble clic: insertar s("${key}:${index}")`}
               onMouseDown={() => playSound(key, data, onTrigger, index)}
+              onDoubleClick={() => insertSnippet(`s("${key}:${index}")`)}
             >
               {' '}
               {index}.{labels[index] ?? ''}
@@ -306,7 +362,7 @@ export function SoundsTab() {
             return (
               <div key={bank} className="mb-3">
                 <div className="font-bold text-foreground pb-1">
-                  {VOICE_BANK_LABELS[bank]} — bank('{bank}')
+                  {VOICE_BANK_LABELS[bank]} — s('texto')
                 </div>
                 <div className="break-normal">{group.map(renderSound)}</div>
               </div>

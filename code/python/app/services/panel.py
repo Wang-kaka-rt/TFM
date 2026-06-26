@@ -752,6 +752,7 @@ def control_panel_script(default_session_id: str) -> str:
     ["sentences", "Oraciones"],
     ["phrases", "Frases"],
     ["words", "Palabras"],
+    ["syllables", "Sílabas"],
     ["letters", "Letras"],
   ].forEach(([value, label]) => {{
     const option = document.createElement("option");
@@ -1173,6 +1174,7 @@ def control_panel_script(default_session_id: str) -> str:
     ["sentences", "oraciones", "Oraciones"],
     ["phrases", "frases", "Frases"],
     ["words", "palabras", "Palabras"],
+    ["syllables", "silabas", "Sílabas"],
     ["letters", "letras", "Letras"],
   ];
 
@@ -1184,6 +1186,7 @@ def control_panel_script(default_session_id: str) -> str:
     ["sentences", "oracion"],
     ["phrases", "frase"],
     ["words", "palabra"],
+    ["syllables", "silaba"],
     ["letters", "letra"],
   ];
 
@@ -1218,6 +1221,26 @@ def control_panel_script(default_session_id: str) -> str:
       }}
     }}
     return {{ combined, perBankCounts }};
+  }};
+
+  // Bank-free addressing: register every clip a third way, keyed only by its bare
+  // text (no bank prefix), merging identical names across levels into one indexed
+  // group. This lets the editor use s('hola') / s('hola:1') directly, so the
+  // "voice" tab no longer requires .bank('palabras'). The four-level grouping in
+  // the sounds panel still comes from the bank-prefixed `combined` map above.
+  const buildFlatSampleMap = (manifest) => {{
+    const flat = {{}};
+    for (const [level] of LEVEL_BANKS) {{
+      const items = Array.isArray(manifest?.[level]) ? manifest[level] : [];
+      for (const item of items) {{
+        const base = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
+        if (!flat[base]) {{
+          flat[base] = [];
+        }}
+        flat[base].push(item.url);
+      }}
+    }}
+    return flat;
   }};
 
   const createImportSignature = (sessionId, combined) => {{
@@ -1281,6 +1304,15 @@ def control_panel_script(default_session_id: str) -> str:
       window.__strudelMixLabels = labels;
       await strudelSamples(mix, "", {{ tag: "mix" }});
     }}
+
+    // Bank-free voice playback: same "voice" tag so it is excluded from the
+    // user/samples tabs, but the bare names carry no bank prefix, so the voice
+    // grouping (which filters by the oraciones/frases/palabras/letras prefix)
+    // never lists them — they stay invisible in the panel yet playable as s('hola').
+    const flat = buildFlatSampleMap(resolvedManifest);
+    if (Object.keys(flat).length) {{
+      await strudelSamples(flat, "", {{ tag: "voice" }});
+    }}
     state.autoImportSignature = signature;
 
     const summaryParts = LEVEL_BANKS
@@ -1288,7 +1320,7 @@ def control_panel_script(default_session_id: str) -> str:
       .map(([, bank, label]) => `${{label}} ${{perBankCounts[bank]}} (bank '${{bank}}')`);
     state.autoImportSummary = `${{totalGroups}} grupos en bancos — ${{summaryParts.join(", ")}}.`;
     if (manual) {{
-      setStatus(`${{totalGroups}} muestras listas. Usa s('texto').bank('oraciones'|'frases'|'palabras'|'letras').`);
+      setStatus(`${{totalGroups}} muestras listas. Usa s('texto') directamente (sin bank); repetidas: s('texto:1').`);
     }} else if (state.autoImportEnabled) {{
       setStatus(`Importacion automatica: ${{summaryParts.join(", ")}}.`);
     }}
@@ -1437,7 +1469,7 @@ def control_panel_script(default_session_id: str) -> str:
           await queueAutoImport({{ force: true }});
           state.autoImportEnabled = false;
           refreshControls();
-          setStatus(`Grabacion procesada. Oraciones, Frases, Palabras y Letras se importaron en sus bancos.`);
+          setStatus(`Grabacion procesada. Oraciones, Frases, Palabras, Sílabas y Letras se importaron en sus bancos.`);
           return;
         }}
         if (session.state === "failed") {{
@@ -1737,7 +1769,7 @@ def control_panel_script(default_session_id: str) -> str:
     autoImportStatusTitle.style.color = state.isRecording || state.isUploading || state.isProcessing ? "#1d4ed8" : "#475569";
     if (state.isRecording) {{
       autoImportStatusText.textContent = "Importando automaticamente";
-      autoImportStatusHint.textContent = "Las conversiones se cargan en tiempo real en los 4 bancos: oraciones, frases, palabras, letras.";
+      autoImportStatusHint.textContent = "Las conversiones se cargan en tiempo real en los bancos: oraciones, frases, palabras, sílabas, letras.";
       autoImportStatusText.style.color = "#1e3a8a";
     }} else if (state.isUploading || state.isProcessing) {{
       autoImportStatusText.textContent = "Sincronizando conversiones";

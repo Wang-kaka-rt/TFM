@@ -339,6 +339,18 @@ class SessionService:
                 "init_error": self._recorder_init_error,
                 "microphone_device": self._settings.microphone_device,
                 "chunk_duration_seconds": self._settings.chunk_duration_seconds,
+                # Silence-based segmentation parameters. The browser recorder
+                # reuses these so its uploads are cut at natural pauses exactly
+                # like the microphone backend, instead of on a fixed timer.
+                "streaming_segmentation": self._settings.streaming_segmentation,
+                "segmentation": {
+                    "silence_rms": self._settings.segment_silence_rms,
+                    "start_rms": self._settings.segment_start_rms,
+                    "hangover_seconds": self._settings.segment_hangover_seconds,
+                    "max_duration_seconds": self._settings.segment_max_duration_seconds,
+                    "min_speech_seconds": self._settings.segment_min_speech_seconds,
+                    "preroll_seconds": self._settings.segment_preroll_seconds,
+                },
             },
             "transcriber": {
                 "configured_backend": self._settings.transcriber_backend,
@@ -653,7 +665,10 @@ class SessionService:
         for word_index, word in enumerate(chunk.words, start=1):
             word_file = runtime.words_dir / f"word_{chunk.index:04d}_{word_index:02d}_{word.word}.wav"
             self._slice_export_attempts += 1
-            ok = export_wav_slice(chunk.audio_path, word_file, word.start, word.end)
+            ok = export_wav_slice(
+                chunk.audio_path, word_file, word.start, word.end,
+                pad_seconds=self._settings.slice_padding_seconds,
+            )
             if not ok:
                 self._slice_export_failures += 1
 
@@ -675,6 +690,7 @@ class SessionService:
             "denoise_backend": self._settings.denoise_backend if self._settings.enable_denoise else "disabled",
             "energy_gate_rms": self._settings.min_chunk_rms if self._settings.enable_energy_gate else None,
             "word_min_probability": self._settings.word_min_probability,
+            "slice_padding_seconds": self._settings.slice_padding_seconds,
             "refinement_backend": self._settings.refinement_backend if self._settings.enable_refinement else "disabled",
             "chunks": [
                 {
@@ -776,7 +792,10 @@ class SessionService:
                 phrase_index = len(items) + 1
                 text = "_".join(phrase.words)
                 file_name = f"phrase_{phrase_index:04d}_{text}.wav"
-                export_wav_slice(chunk.audio_path, runtime.phrases_dir / file_name, phrase.start, phrase.end)
+                export_wav_slice(
+                    chunk.audio_path, runtime.phrases_dir / file_name, phrase.start, phrase.end,
+                    pad_seconds=self._settings.slice_padding_seconds,
+                )
                 items.append(
                     {
                         "name": f"phrase_{phrase_index:04d}",
@@ -802,7 +821,10 @@ class SessionService:
             if sentence is None:
                 continue
             file_name = f"sentence_{chunk.index:04d}.wav"
-            export_wav_slice(chunk.audio_path, runtime.sentences_dir / file_name, sentence.start, sentence.end)
+            export_wav_slice(
+                chunk.audio_path, runtime.sentences_dir / file_name, sentence.start, sentence.end,
+                pad_seconds=self._settings.slice_padding_seconds,
+            )
             items.append(
                 {
                     "name": f"sentence_{chunk.index:04d}",
@@ -978,7 +1000,20 @@ def _atomic_write_text(path: Path, data: str) -> None:
         raise
 
 
-def export_wav_slice(source_path: Path, target_path: Path, start_seconds: float, end_seconds: float) -> bool:
+def export_wav_slice(
+    source_path: Path,
+    target_path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    pad_seconds: float = 0.0,
+) -> bool:
+    # Widen the window by ``pad_seconds`` on each side so word boundaries are not
+    # clipped, then clamp the start to 0; the end is clamped to the source length
+    # by the slicing logic below (AudioSegment truncates an over-long slice; the
+    # wave fallback caps end_frame at getnframes()).
+    pad = max(0.0, pad_seconds)
+    start_seconds = max(0.0, start_seconds - pad)
+    end_seconds = end_seconds + pad
     if AudioSegment is not None:
         try:
             segment = AudioSegment.from_file(source_path)

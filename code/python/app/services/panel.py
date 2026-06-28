@@ -1291,12 +1291,13 @@ def control_panel_script(default_session_id: str) -> str:
     if (typeof strudelSamples !== "function") {{
       throw new Error("Strudel aun no esta listo. Espera a que cargue completamente.");
     }}
-    // Import all four levels in a single call; each key is already bank-prefixed.
-    // The "voice" tag lets Strudel's sounds panel group them under their own tab
-    // and show the bare text (e.g. "bueno") instead of the "frases_bueno" key.
-    await strudelSamples(combined, "", {{ tag: "voice" }});
+    // The "voice" tab is registered with bare names only (see `flat` below), so
+    // clicking a sound inserts a clean s("hola"). The bank-prefixed `combined`
+    // map is still built above (for the import signature and the summary counts)
+    // but is no longer registered into Strudel — it used to clutter the voice tab
+    // with "palabras_hola" / "frases_bueno" style keys.
 
-    // Register the same clips a second way for the "mix" tab: one indexed list
+    // Register the clips for the "mix" tab: one indexed list
     // per level, used as s("oracion:0") / s("frase:1") / s("palabra:2") /
     // s("letra:3"). Labels are published first so the panel re-render can read them.
     const {{ mix, labels }} = buildMixSampleMap(resolvedManifest);
@@ -1305,10 +1306,9 @@ def control_panel_script(default_session_id: str) -> str:
       await strudelSamples(mix, "", {{ tag: "mix" }});
     }}
 
-    // Bank-free voice playback: same "voice" tag so it is excluded from the
-    // user/samples tabs, but the bare names carry no bank prefix, so the voice
-    // grouping (which filters by the oraciones/frases/palabras/letras prefix)
-    // never lists them — they stay invisible in the panel yet playable as s('hola').
+    // "voice" tab: bare names only, so every sound plays and inserts as a clean
+    // s('hola') (repeats become s('hola:1')). This is now the sole "voice"
+    // registration, covering all five levels (sentences/phrases/words/syllables/letters).
     const flat = buildFlatSampleMap(resolvedManifest);
     if (Object.keys(flat).length) {{
       await strudelSamples(flat, "", {{ tag: "voice" }});
@@ -1389,6 +1389,92 @@ def control_panel_script(default_session_id: str) -> str:
       .then(() => uploadBrowserChunk(blob));
     state.browserUploadChain = uploadChain;
     return uploadChain;
+  }};
+
+  // --- Browser-side silence segmentation -----------------------------------
+  // Mirrors the microphone backend's record_segment(): the captured audio is
+  // sliced at natural pauses (RMS energy gate + hangover) instead of on a fixed
+  // timer, so a word/sentence spoken across a chunk boundary is never cut in
+  // half. Accounting is in seconds so it is independent of the browser's audio
+  // block size and sample rate.
+  const computeBlockRms = (block) => {{
+    if (!block || !block.length) {{
+      return 0;
+    }}
+    let sumSquares = 0;
+    for (let i = 0; i < block.length; i += 1) {{
+      sumSquares += block[i] * block[i];
+    }}
+    return Math.sqrt(sumSquares / block.length);
+  }};
+
+  const resetSegment = (seg) => {{
+    seg.speechStarted = false;
+    seg.speechSeconds = 0;
+    seg.trailingSilenceSeconds = 0;
+    seg.capturedSeconds = 0;
+    seg.captured = [];
+    seg.preroll = [];
+    seg.prerollSeconds = 0;
+  }};
+
+  const emitSegment = (recorder, captured) => {{
+    if (captured && captured.length) {{
+      queueBrowserChunkUpload(captured, recorder.sampleRate);
+    }}
+  }};
+
+  const processSegmentationBlock = (recorder, block) => {{
+    const seg = recorder.segmentation;
+    const blockSeconds = block.length / recorder.sampleRate;
+    const rms = computeBlockRms(block);
+
+    if (!seg.speechStarted) {{
+      // Keep a short rolling pre-roll so the onset consonant is not lost.
+      seg.preroll.push({{ block, seconds: blockSeconds }});
+      seg.prerollSeconds += blockSeconds;
+      while (seg.prerollSeconds > seg.prerollMaxSeconds && seg.preroll.length > 1) {{
+        seg.prerollSeconds -= seg.preroll.shift().seconds;
+      }}
+      if (rms >= seg.startThreshold) {{
+        seg.speechStarted = true;
+        seg.captured = seg.preroll.map((entry) => entry.block);
+        seg.capturedSeconds = seg.prerollSeconds;
+        seg.preroll = [];
+        seg.prerollSeconds = 0;
+        seg.speechSeconds = blockSeconds;
+        seg.trailingSilenceSeconds = 0;
+      }}
+      return;
+    }}
+
+    seg.captured.push(block);
+    seg.capturedSeconds += blockSeconds;
+    if (rms >= seg.silenceRms) {{
+      seg.speechSeconds += blockSeconds;
+      seg.trailingSilenceSeconds = 0;
+    }} else {{
+      seg.trailingSilenceSeconds += blockSeconds;
+    }}
+
+    // Enough speech followed by a real pause -> emit a clean segment.
+    if (seg.speechSeconds >= seg.minSpeechSeconds && seg.trailingSilenceSeconds >= seg.hangoverSeconds) {{
+      const captured = seg.captured;
+      resetSegment(seg);
+      emitSegment(recorder, captured);
+      return;
+    }}
+    // False onset (never reached the speech minimum) and silence returned: drop.
+    if (seg.speechSeconds < seg.minSpeechSeconds && seg.trailingSilenceSeconds >= seg.hangoverSeconds) {{
+      resetSegment(seg);
+      return;
+    }}
+    // Latency cap: force a cut even without a pause.
+    if (seg.capturedSeconds >= seg.maxDurationSeconds) {{
+      const captured = seg.captured;
+      resetSegment(seg);
+      emitSegment(recorder, captured);
+    }}
   }};
 
   const refreshWordPreview = async () => {{
@@ -1672,7 +1758,12 @@ def control_panel_script(default_session_id: str) -> str:
         return;
       }}
       const input = event.inputBuffer.getChannelData(0);
-      state.browserRecorder.buffers.push(new Float32Array(input));
+      const block = new Float32Array(input);
+      if (state.browserRecorder.useSegmentation) {{
+        processSegmentationBlock(state.browserRecorder, block);
+      }} else {{
+        state.browserRecorder.buffers.push(block);
+      }}
     }};
 
     state.visualizer.source.connect(processor);
@@ -1681,14 +1772,51 @@ def control_panel_script(default_session_id: str) -> str:
     state.visualizer.captureProcessor = processor;
     state.visualizer.captureGain = captureGain;
     state.browserUploadChain = Promise.resolve();
+
+    // Reuse the microphone backend's segmentation parameters (sent via the
+    // runtime diagnostics) so both capture paths cut on silence identically.
+    const recorderDiag = state.runtimeDiagnostics?.recorder || {{}};
+    const segConfig = Object.assign(
+      {{
+        silence_rms: 0.008,
+        start_rms: 0.018,
+        hangover_seconds: 0.6,
+        max_duration_seconds: 8.0,
+        min_speech_seconds: 0.2,
+        preroll_seconds: 0.25,
+      }},
+      recorderDiag.segmentation || {{}},
+    );
+    const useSegmentation = recorderDiag.streaming_segmentation !== false;
+    const sampleRate = audioContext.sampleRate || 48000;
+
     state.browserRecorder = {{
       processor,
       captureGain,
-      sampleRate: audioContext.sampleRate || 48000,
+      sampleRate,
       buffers: [],
-      timerId: window.setInterval(() => {{
-        void flushBrowserChunk();
-      }}, Math.max(250, Math.round(chunkDurationSeconds * 1000))),
+      useSegmentation,
+      segmentation: {{
+        silenceRms: Number(segConfig.silence_rms),
+        startThreshold: Math.max(Number(segConfig.start_rms), Number(segConfig.silence_rms)),
+        hangoverSeconds: Number(segConfig.hangover_seconds),
+        maxDurationSeconds: Number(segConfig.max_duration_seconds),
+        minSpeechSeconds: Number(segConfig.min_speech_seconds),
+        prerollMaxSeconds: Number(segConfig.preroll_seconds),
+        speechStarted: false,
+        speechSeconds: 0,
+        trailingSilenceSeconds: 0,
+        capturedSeconds: 0,
+        captured: [],
+        preroll: [],
+        prerollSeconds: 0,
+      }},
+      // Fixed-timer fallback only used when silence segmentation is disabled.
+      timerId: useSegmentation
+        ? null
+        : window.setInterval(() => {{
+            void flushBrowserChunk();
+          }}, Math.max(250, Math.round(chunkDurationSeconds * 1000))),
     }};
   }};
 
@@ -1717,7 +1845,20 @@ def control_panel_script(default_session_id: str) -> str:
     if (state.visualizer?.captureGain === recorder.captureGain) {{
       state.visualizer.captureGain = null;
     }}
-    const pendingBuffers = flushFinal ? recorder.buffers : [];
+    let pendingBuffers = [];
+    if (flushFinal) {{
+      if (recorder.useSegmentation) {{
+        // Emit the segment in progress only if it already holds real speech, so
+        // a trailing silence tail is not uploaded as an empty chunk.
+        const seg = recorder.segmentation;
+        if (seg.speechStarted && seg.speechSeconds >= seg.minSpeechSeconds) {{
+          pendingBuffers = seg.captured;
+        }}
+        resetSegment(seg);
+      }} else {{
+        pendingBuffers = recorder.buffers;
+      }}
+    }}
     recorder.buffers = [];
     state.browserRecorder = null;
     const uploadPromise = queueBrowserChunkUpload(pendingBuffers, recorder.sampleRate);

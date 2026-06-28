@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     mock_chunk_prefix: str = "chunk"
     max_chunks_per_session: int = 0
     enable_phrase_and_sentence_exports: bool = True
+    # Symmetric padding (seconds) added to each word/phrase/sentence slice before
+    # cutting. faster-whisper word timestamps clip on/off-set consonants, so a
+    # small margin keeps the start and end of each utterance intact. Clamped to
+    # the source chunk, so it never reads past the recording. Syllable and letter
+    # slices are NOT padded (padding would overlap neighbouring sub-word cuts).
+    slice_padding_seconds: float = 0.04
     # Syllable-level slicing (between words and letters). Each word is split into
     # Spanish syllables and the word audio is cut at syllable boundaries, reusing
     # forced-alignment character timings when available, else proportional timing.

@@ -66,7 +66,27 @@ powershell -ExecutionPolicy Bypass -File .\final_acceptance.ps1 -SessionId final
 - `STRUDEL_ENABLE_VAD=true|false`
 - `STRUDEL_ENABLE_REFINEMENT=true|false`
 - `STRUDEL_REFINEMENT_BACKEND=mock|whisperx`
+- `STRUDEL_SLICE_PADDING_SECONDS=0.04` (margin added to each word/phrase/sentence slice so boundaries are not clipped)
+- `STRUDEL_ENABLE_ENERGY_GATE=true|false` + `STRUDEL_MIN_CHUNK_RMS=0.005` (drop near-silent chunks)
+- `STRUDEL_WORD_MIN_PROBABILITY=0.45` (drop low-confidence words in noise)
 - `STRUDEL_SAMPLES_ROOT=../../samples`
 - `STRUDEL_STRUDEL_BASE_URL=http://127.0.0.1:8787`
+
+A ready-to-use noisy-environment preset lives in `.env.realtime.example`
+(`cp .env.realtime.example .env`). It enables denoise, the energy gate,
+confidence filtering, and Silero VAD together.
+
+## Noise / word-loss evaluation
+
+```powershell
+# Dry run (no audio or model required):
+python -m scripts.evaluate_noise --selftest
+
+# Real run over clip.wav + clip.txt pairs, denoise off vs on, across SNRs:
+python -m scripts.evaluate_noise --audio-dir data\clips --snr clean 20 10 5 0 --denoise both --out results\noise_eval
+```
+
+Outputs WER, word-loss rate, hallucination rate per condition and writes
+`.json` + `.csv` for the report.
 
 Relative `STRUDEL_SAMPLES_ROOT` values are resolved from this `code/python` directory, so the service writes to the same place even if it is launched from a different working directory.

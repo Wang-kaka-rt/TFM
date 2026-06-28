@@ -15,10 +15,16 @@ def create_app() -> FastAPI:
         summary="Backend service for the Strudel real-time voice sampling workflow.",
     )
 
+    # The backend uses no cookies, auth headers, or any other credentials: the
+    # control panel and Strudel assets are served same-origin (CORS does not even
+    # apply there), and the only cross-origin callers are anonymous. Keep
+    # allow_credentials False so the explicit origin allowlist actually takes
+    # effect — enabling credentials would forbid wildcards and grant credentialed
+    # cross-origin access this service never needs.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.allowed_origins,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

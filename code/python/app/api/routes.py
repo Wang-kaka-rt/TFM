@@ -75,7 +75,7 @@ async def set_transcriber_model(
 async def storage_info(
     session_id: str | None = Query(default=None, description="Optional session id for resolved storage paths"),
 ) -> dict[str, str | None]:
-    root = session_service._settings.samples_root.resolve()
+    root = session_service.samples_root
     normalized = session_id.strip() if session_id else ""
     if normalized:
         workspace_dir = (root / normalized).resolve()
@@ -95,7 +95,7 @@ async def storage_info(
 async def open_storage_path(
     session_id: str | None = Query(default=None, description="Optional session id for resolved storage paths"),
 ) -> ApiMessage:
-    root = session_service._settings.samples_root.resolve()
+    root = session_service.samples_root
     normalized = session_id.strip() if session_id else ""
     target = (root / normalized).resolve() if normalized else root
     try:
@@ -215,7 +215,7 @@ async def get_sample_file(
     sample_group: str = ApiPath(pattern="^(sentences|phrases|words|syllables|letters)$"),
     file_name: str = ApiPath(pattern=r"^[\w.-]+\.wav$"),
 ) -> FileResponse:
-    root = session_service._settings.samples_root.resolve()
+    root = session_service.samples_root
     sample_path = (root / session_id / sample_group / file_name).resolve()
     try:
         sample_path.relative_to(root)

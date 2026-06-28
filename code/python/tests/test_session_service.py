@@ -103,6 +103,43 @@ def test_session_service_generates_artifacts(tmp_path):
     assert "slice_success_rate_percent" in metrics
 
 
+def test_finished_runtimes_are_evicted_past_retention_cap(tmp_path):
+    settings = Settings(
+        samples_root=tmp_path / "samples",
+        chunk_duration_seconds=0.05,
+        max_chunks_per_session=1,
+        session_poll_interval_seconds=0.01,
+        recorder_backend="mock",
+        transcriber_backend="mock",
+        mock_transcript_words=["hola"],
+    )
+    service = SessionService(settings)
+    service._MAX_RETAINED_RUNTIMES = 3
+
+    async def run_session(session_id: str):
+        await service.start(session_id)
+        await asyncio.sleep(0.05)
+        await service.stop(session_id)
+        for _ in range(50):
+            session = service.get(session_id)
+            if session is not None and session.state.value == "stopped":
+                return
+            await asyncio.sleep(0.02)
+        raise AssertionError(f"session {session_id} did not stop in time")
+
+    async def scenario():
+        for index in range(6):
+            await run_session(f"sess{index:02d}")
+
+    asyncio.run(scenario())
+
+    # Only the cap's worth of (already finished) runtimes are retained; the
+    # oldest ones were evicted so memory stays bounded.
+    assert len(service._runtimes) <= service._MAX_RETAINED_RUNTIMES
+    assert "sess00" not in service._runtimes
+    assert "sess05" in service._runtimes
+
+
 def test_session_service_blocks_start_when_microphone_backend_init_fails(tmp_path, monkeypatch):
     from app.services import session_service as session_service_module
 

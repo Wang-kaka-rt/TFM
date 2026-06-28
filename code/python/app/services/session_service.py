@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import wave
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -103,6 +104,15 @@ class SessionRuntime:
 
 
 class SessionService:
+    # Stopped sessions are kept in memory so their artifacts (manifest / strudel
+    # script) remain importable after /stop. Cap how many distinct sessions are
+    # retained so a long-running server cannot grow unbounded; the oldest already
+    # finished session is evicted once the cap is exceeded.
+    _MAX_RETAINED_RUNTIMES = 32
+    # Upper bound on the rolling latency window used for avg/p95 metrics. Bounds
+    # memory on long sessions while staying large enough for a stable p95.
+    _MAX_LATENCY_SAMPLES = 4096
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._manager = SessionManager()
@@ -204,7 +214,7 @@ class SessionService:
         )
         self._runtimes: dict[str, SessionRuntime] = {}
         self._lock = asyncio.Lock()
-        self._chunk_processing_latencies: list[float] = []
+        self._chunk_processing_latencies: deque[float] = deque(maxlen=self._MAX_LATENCY_SAMPLES)
         self._slice_export_attempts = 0
         self._slice_export_failures = 0
         self._denoised_chunk_count = 0
@@ -221,6 +231,32 @@ class SessionService:
             )
             fallback_root.mkdir(parents=True, exist_ok=True)
             self._settings.samples_root = fallback_root
+
+    @property
+    def samples_root(self) -> Path:
+        """Resolved root directory for session sample artifacts."""
+        return self._settings.samples_root.resolve()
+
+    def _evict_stale_runtimes(self, *, keep: str | None = None) -> None:
+        # Drop the oldest already-finished runtimes once the retention cap is
+        # exceeded. Never evict the session passed as ``keep`` (the one being
+        # started) or a runtime whose capture/finalize task is still running, so
+        # in-flight recordings are preserved regardless of how old they are.
+        while len(self._runtimes) > self._MAX_RETAINED_RUNTIMES:
+            evicted = False
+            for session_id, runtime in self._runtimes.items():
+                if session_id == keep:
+                    continue
+                if runtime.task is not None and not runtime.task.done():
+                    continue
+                if runtime.finalize_task is not None and not runtime.finalize_task.done():
+                    continue
+                del self._runtimes[session_id]
+                evicted = True
+                break
+            if not evicted:
+                # Every retained runtime is still active; nothing safe to evict.
+                break
 
     async def start(self, session_id: str) -> SessionInfo:
         async with self._lock:
@@ -241,6 +277,7 @@ class SessionService:
             runtime = self._build_runtime(session_id)
             self._reset_workspace(runtime)
             self._runtimes[session_id] = runtime
+            self._evict_stale_runtimes(keep=session_id)
 
             session = self._manager.start(
                 session_id,
@@ -404,11 +441,6 @@ class SessionService:
         normalized = (model_name or "").strip()
         if normalized not in allowed:
             raise ValueError(f"unsupported model '{model_name}'")
-        # Reloading swaps the model in VRAM/RAM, which would corrupt an in-flight
-        # recording pipeline, so refuse while a capture loop is still running.
-        for runtime in self._runtimes.values():
-            if runtime.task is not None and not runtime.task.done():
-                raise RuntimeError("Detén la grabación antes de cambiar el modelo.")
 
         def build() -> BaseTranscriber:
             return create_transcriber(
@@ -428,6 +460,13 @@ class SessionService:
             )
 
         async with self._lock:
+            # Reloading swaps the model in VRAM/RAM, which would corrupt an
+            # in-flight recording pipeline, so refuse while a capture loop is
+            # still running. Checked under the lock (which start() also holds) so
+            # a session cannot slip in between the check and the model swap.
+            for runtime in self._runtimes.values():
+                if runtime.task is not None and not runtime.task.done():
+                    raise RuntimeError("Detén la grabación antes de cambiar el modelo.")
             # Build first; only swap in the new transcriber if it loaded successfully,
             # so a failed download/load leaves the current model untouched.
             new_transcriber = await asyncio.to_thread(build)

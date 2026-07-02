@@ -1306,9 +1306,18 @@ def control_panel_script(default_session_id: str) -> str:
       await strudelSamples(mix, "", {{ tag: "mix" }});
     }}
 
-    // "voice" tab: bare names only, so every sound plays and inserts as a clean
-    // s('hola') (repeats become s('hola:1')). This is now the sole "voice"
-    // registration, covering all five levels (sentences/phrases/words/syllables/letters).
+    // "voice" tab, part 1 — grouping: register the bank-prefixed clips
+    // (oraciones_/frases_/palabras_/silabas_/letras_) under the voice tag so the
+    // sounds panel can split them into the five level blocks. These keys are only
+    // used for display/grouping; the panel inserts the bare text, not the key.
+    if (Object.keys(combined).length) {{
+      await strudelSamples(combined, "", {{ tag: "voice" }});
+    }}
+
+    // "voice" tab, part 2 — playback: also register every clip under its bare text
+    // (merged across levels; repeats become s('hola:1')) so the inserted `hola`
+    // resolves without a bank. Bare entries have no `<bank>_` prefix, so the panel's
+    // per-level grouping skips them — they stay playable but hidden from the list.
     const flat = buildFlatSampleMap(resolvedManifest);
     if (Object.keys(flat).length) {{
       await strudelSamples(flat, "", {{ tag: "voice" }});

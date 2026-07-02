@@ -14,9 +14,11 @@ import { prebake } from '@src/repl/prebake.mjs';
 const getSamples = (samples) =>
   Array.isArray(samples) ? samples.length : typeof samples === 'object' ? Object.values(samples).length : 1;
 
-// Voice samples are registered as `<bank>_<text>` (e.g. "frases_bueno") so the
-// original word/sentence is reachable via s('bueno').bank('frases'). The bank
-// prefix is only a routing key — in the UI we show the bare text grouped by bank.
+// Voice samples are registered twice: (1) as `<bank>_<text>` (e.g. "palabras_hola")
+// so the voice tab can group them into the five level blocks below, and (2) under
+// their bare text (e.g. "hola") so the inserted `hola` resolves without a bank.
+// The grouped display uses the bank prefix; the label and the inserted snippet use
+// the bare text only.
 const VOICE_BANK_LABELS = {
   oraciones: 'Oraciones',
   frases: 'Frases',
@@ -155,19 +157,21 @@ export function SoundsTab() {
     }
   };
 
+  // Resolve Strudel's CodeMirror 6 view (window.strudelMirror), if present.
+  const getEditorView = () => {
+    const mirror = typeof window !== 'undefined' ? window.strudelMirror : null;
+    if (!mirror) return null;
+    if (mirror.editor && typeof mirror.editor.dispatch === 'function') return mirror.editor;
+    if (typeof mirror.dispatch === 'function') return mirror;
+    return null;
+  };
+
   // Double-click a sound to drop its s("...") call at the editor cursor.
   // Mirrors the voice control panel's insert logic: prefer Strudel's CodeMirror 6
   // view (window.strudelMirror), then fall back to the focused .cm-content, then a
   // plain textarea. Single-click still previews; double-click inserts.
   const insertAtCursor = (code) => {
-    const mirror = typeof window !== 'undefined' ? window.strudelMirror : null;
-    const view = mirror
-      ? mirror.editor && typeof mirror.editor.dispatch === 'function'
-        ? mirror.editor
-        : typeof mirror.dispatch === 'function'
-          ? mirror
-          : null
-      : null;
+    const view = getEditorView();
     if (view && view.state && typeof view.state.replaceSelection === 'function') {
       view.focus();
       view.dispatch(view.state.replaceSelection(code), { scrollIntoView: true });
@@ -205,17 +209,68 @@ export function SoundsTab() {
     }
   };
 
+  // Whether the editor cursor currently sits inside a quoted string ("…", '…' or `…`).
+  // Scans the document up to the caret and tracks quote state (skipping escaped
+  // chars). Falls back to a plain textarea; returns false when it cannot tell.
+  const isCursorInsideString = () => {
+    const view = getEditorView();
+    let text = null;
+    let pos = null;
+    if (view && view.state) {
+      text = view.state.doc.toString();
+      pos = view.state.selection.main.head;
+    } else {
+      const textarea = document.querySelector('textarea');
+      if (textarea && textarea.selectionStart != null) {
+        text = textarea.value;
+        pos = textarea.selectionStart;
+      }
+    }
+    if (text == null || pos == null) return false;
+    let inString = false;
+    let quote = null;
+    for (let i = 0; i < pos; i++) {
+      const c = text[i];
+      if (inString) {
+        if (c === '\\') {
+          i++;
+          continue;
+        }
+        if (c === quote) {
+          inString = false;
+          quote = null;
+        }
+      } else if (c === '"' || c === "'" || c === '`') {
+        inString = true;
+        quote = c;
+      }
+    }
+    return inString;
+  };
+
+  // Insert a sound token: bare when the cursor is already inside a string (so it
+  // lands inside an existing s("…")), otherwise wrapped as a ready-to-run s("…").
+  // Inside a string we prepend a space so consecutive tokens stay separated
+  // (e.g. building s("hola bien")).
+  const insertToken = (bareToken) => {
+    const code = isCursorInsideString() ? ` ${bareToken}` : `s("${bareToken}")`;
+    insertSnippet(code);
+  };
+
   const renderSound = ([name, { data, onTrigger }]) => {
-    // Voice samples keep their `<bank>_<text>` registration key (used as `s`),
-    // but are shown by their bare text so the list reads "bueno", not "frases_bueno".
-    const displayName = data?.tag === 'voice' ? parseVoiceName(name).base : name;
+    const isVoice = data?.tag === 'voice';
+    // Voice list shows the bare text (strip the `<bank>_` grouping prefix); every
+    // other tab shows the registration key as-is.
+    const displayName = isVoice ? parseVoiceName(name).base : name;
+    // Double-click inserts the bare text when the caret is inside a string (drop it
+    // into an existing s("…")), otherwise a full s("…") call.
     return (
       <span
         key={name}
         className="cursor-pointer hover:opacity-50"
-        title={`Click: probar · Doble clic: insertar s("${displayName}")`}
+        title={`Click: probar · Doble clic: insertar ${displayName} / s("${displayName}")`}
         onMouseDown={() => playSound(name, data, onTrigger, numRef.current)}
-        onDoubleClick={() => insertSnippet(`s("${displayName}")`)}
+        onDoubleClick={() => insertToken(displayName)}
       >
         {' '}
         {displayName}
@@ -250,9 +305,9 @@ export function SoundsTab() {
             <span
               key={index}
               className="cursor-pointer hover:opacity-50"
-              title={`Click: probar · Doble clic: insertar s("${key}:${index}")`}
+              title={`Click: probar · Doble clic: insertar ${key}:${index} / s("${key}:${index}")`}
               onMouseDown={() => playSound(key, data, onTrigger, index)}
-              onDoubleClick={() => insertSnippet(`s("${key}:${index}")`)}
+              onDoubleClick={() => insertToken(`${key}:${index}`)}
             >
               {' '}
               {index}.{labels[index] ?? ''}
@@ -354,6 +409,9 @@ export function SoundsTab() {
 
       <div className="min-h-0 max-h-full grow overflow-auto break-normal p-2">
         {soundsFilter === soundFilterType.VOICE ? (
+          // Group the bank-prefixed voice entries into the five level blocks; the
+          // bare-text entries (bank === '') are not part of any block, so they stay
+          // hidden here while remaining playable via s('hola').
           VOICE_BANK_ORDER.map((bank) => {
             const group = soundEntries.filter(([n]) => parseVoiceName(n).bank === bank);
             if (!group.length) {
@@ -361,9 +419,7 @@ export function SoundsTab() {
             }
             return (
               <div key={bank} className="mb-3">
-                <div className="font-bold text-foreground pb-1">
-                  {VOICE_BANK_LABELS[bank]} — s('texto')
-                </div>
+                <div className="font-bold text-foreground pb-1">{VOICE_BANK_LABELS[bank]}</div>
                 <div className="break-normal">{group.map(renderSound)}</div>
               </div>
             );

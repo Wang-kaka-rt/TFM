@@ -1,0 +1,31 @@
+model,clip,repeat,reference,hypothesis,audio_duration_seconds,processing_seconds,real_time_factor,ref_words,substitutions,deletions,insertions,hits,wer
+base,clip_001,1,Hay diecisiete grados con sol,hay 17 grados con sol,3.328,8.6032,2.5851,5,1,0,0,4,0.2
+base,clip_001,2,Hay diecisiete grados con sol,hay 17 grados con sol,3.328,4.7122,1.4159,5,1,0,0,4,0.2
+base,clip_001,3,Hay diecisiete grados con sol,hay 17 grados con sol,3.328,6.6838,2.0084,5,1,0,0,4,0.2
+base,clip_002,1,Hay catorce grados y está nublado,hay 14 grados y están un blado,2.7307,0.4438,0.1625,6,3,0,1,3,0.6667
+base,clip_002,2,Hay catorce grados y está nublado,hay 14 grados y están un blado,2.7307,0.4575,0.1675,6,3,0,1,3,0.6667
+base,clip_002,3,Hay catorce grados y está nublado,hay 14 grados y están un blado,2.7307,0.4601,0.1685,6,3,0,1,3,0.6667
+base,clip_003,1,Hay quince grados y llueve,hay que integrar si llueve,2.2187,0.4536,0.2045,5,3,0,0,2,0.6
+base,clip_003,2,Hay quince grados y llueve,hay que integrar si llueve,2.2187,0.4474,0.2016,5,3,0,0,2,0.6
+base,clip_003,3,Hay quince grados y llueve,hay que integrar si llueve,2.2187,0.4558,0.2054,5,3,0,0,2,0.6
+base,clip_004,1,Hay diecinueve grados y está nublado,ahí 19 grados y están un lado,4.1813,0.4555,0.1089,6,4,0,1,2,0.8333
+base,clip_004,2,Hay diecinueve grados y está nublado,ahí 19 grados y están un lado,4.1813,0.4484,0.1072,6,4,0,1,2,0.8333
+base,clip_004,3,Hay diecinueve grados y está nublado,ahí 19 grados y están un lado,4.1813,0.4585,0.1096,6,4,0,1,2,0.8333
+base,clip_005,1,Hay diecisiete grados y está nublado,hay 17 grados y están un lado,4.2667,0.458,0.1073,6,3,0,1,3,0.6667
+base,clip_005,2,Hay diecisiete grados y está nublado,hay 17 grados y están un lado,4.2667,0.449,0.1052,6,3,0,1,3,0.6667
+base,clip_005,3,Hay diecisiete grados y está nublado,hay 17 grados y están un lado,4.2667,0.4626,0.1084,6,3,0,1,3,0.6667
+small,clip_001,1,Hay diecisiete grados con sol,hay 17 grados con sol,3.328,1.3792,0.4144,5,1,0,0,4,0.2
+small,clip_001,2,Hay diecisiete grados con sol,hay 17 grados con sol,3.328,1.3085,0.3932,5,1,0,0,4,0.2
+small,clip_001,3,Hay diecisiete grados con sol,hay 17 grados con sol,3.328,1.3133,0.3946,5,1,0,0,4,0.2
+small,clip_002,1,Hay catorce grados y está nublado,hay 14 grados y está nublado,2.7307,1.3737,0.503,6,1,0,0,5,0.1667
+small,clip_002,2,Hay catorce grados y está nublado,hay 14 grados y está nublado,2.7307,1.3886,0.5085,6,1,0,0,5,0.1667
+small,clip_002,3,Hay catorce grados y está nublado,hay 14 grados y está nublado,2.7307,1.408,0.5156,6,1,0,0,5,0.1667
+small,clip_003,1,Hay quince grados y llueve,hay 15 grados y llueve,2.2187,1.1625,0.524,5,1,0,0,4,0.2
+small,clip_003,2,Hay quince grados y llueve,hay 15 grados y llueve,2.2187,1.0907,0.4916,5,1,0,0,4,0.2
+small,clip_003,3,Hay quince grados y llueve,hay 15 grados y llueve,2.2187,1.1143,0.5022,5,1,0,0,4,0.2
+small,clip_004,1,Hay diecinueve grados y está nublado,hay 19 grados y están nublado,4.1813,1.1153,0.2667,6,2,0,0,4,0.3333
+small,clip_004,2,Hay diecinueve grados y está nublado,hay 19 grados y están nublado,4.1813,1.1192,0.2677,6,2,0,0,4,0.3333
+small,clip_004,3,Hay diecinueve grados y está nublado,hay 19 grados y están nublado,4.1813,1.0868,0.2599,6,2,0,0,4,0.3333
+small,clip_005,1,Hay diecisiete grados y está nublado,hay 17 grados y está nublado,4.2667,1.0704,0.2509,6,1,0,0,5,0.1667
+small,clip_005,2,Hay diecisiete grados y está nublado,hay 17 grados y está nublado,4.2667,1.0915,0.2558,6,1,0,0,5,0.1667
+small,clip_005,3,Hay diecisiete grados y está nublado,hay 17 grados y está nublado,4.2667,1.1207,0.2627,6,1,0,0,5,0.1667

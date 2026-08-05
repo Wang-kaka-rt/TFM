@@ -1,0 +1,54 @@
+{
+  "protocol": {
+    "dataset_clips": 30,
+    "models": [
+      "base",
+      "small"
+    ],
+    "repeats": 3,
+    "backend": "faster-whisper",
+    "device": "auto",
+    "compute_type": "int8",
+    "language": "es",
+    "beam_size": 1,
+    "sample_rate_hz": 16000,
+    "normalization": "lowercase; non-word punctuation replaced with separators; underscores trimmed",
+    "latency_scope": "faster-whisper transcribe call; excludes WAV preparation and model-load time",
+    "runtime": {
+      "python": "3.14.0",
+      "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O"
+    }
+  },
+  "summary": [
+    {
+      "model": "base",
+      "clips": 30,
+      "runs": 90,
+      "ref_words": 489,
+      "wer": 0.5215,
+      "substitutions": 225,
+      "deletions": 0,
+      "insertions": 30,
+      "latency_mean_seconds": 0.729,
+      "latency_median_seconds": 0.3375,
+      "latency_std_seconds": 1.1809,
+      "latency_p95_seconds": 4.3347,
+      "rtf_mean": 0.2304
+    },
+    {
+      "model": "small",
+      "clips": 30,
+      "runs": 90,
+      "ref_words": 489,
+      "wer": 0.2515,
+      "substitutions": 117,
+      "deletions": 6,
+      "insertions": 0,
+      "latency_mean_seconds": 1.1578,
+      "latency_median_seconds": 1.0751,
+      "latency_std_seconds": 0.1508,
+      "latency_p95_seconds": 1.4487,
+      "rtf_mean": 0.3543
+    }
+  ]
+}

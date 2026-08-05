@@ -42,9 +42,11 @@ import argparse
 import csv
 import json
 import math
+import platform
 import statistics
 import sys
 import tempfile
+import time
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -304,13 +306,27 @@ def build_transcriber(backend: str, model: str, device: str, compute_type: str):
     )
 
 
-def transcribe_text(transcriber, signal: np.ndarray, denoise: NoiseReduceDenoiser | None, tmp: Path) -> str:
-    path = tmp / "clip.wav"
+def transcribe_text(
+    transcriber,
+    signal: np.ndarray,
+    denoise: NoiseReduceDenoiser | None,
+    tmp: Path,
+    *,
+    file_stem: str,
+) -> tuple[str, float]:
+    """Return the hypothesis and processing time for one fixed audio input.
+
+    ``file_stem`` makes every condition use its own temporary WAV.  This is
+    important for a fair raw-versus-denoised comparison: the denoiser works in
+    place and must never alter the audio reused by the raw condition.
+    """
+    path = tmp / f"{file_stem}.wav"
     write_wav_mono(path, signal)
+    started = time.perf_counter()
     if denoise is not None:
         denoise.denoise(path)
     words = transcriber.transcribe(path, chunk_index=0)
-    return " ".join(w.word for w in words)
+    return " ".join(w.word for w in words), max(0.0, time.perf_counter() - started)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -351,14 +367,28 @@ def run(args: argparse.Namespace) -> int:
         tmp = Path(tmp_name)
         for sample in samples:
             ref = tokenize(sample.text)
-            for cond in conditions:
-                if cond.snr == "clean":
-                    signal = sample.audio
+            # Create one deterministic noisy signal per (clip, SNR) and share
+            # it between raw and denoised conditions.  Without this pairing,
+            # any apparent denoising effect could partly come from a different
+            # random-noise draw instead of the denoiser itself.
+            signals: dict[str, np.ndarray] = {}
+            for snr in args.snr:
+                if snr == "clean":
+                    signals[snr] = sample.audio
                 else:
                     noise = noise_clip if noise_clip is not None else make_noise(args.noise, sample.audio.size, rng)
-                    signal = mix_at_snr(sample.audio, noise, float(cond.snr), rng)
+                    signals[snr] = mix_at_snr(sample.audio, noise, float(snr), rng)
+
+            for cond_index, cond in enumerate(conditions):
+                signal = signals[cond.snr]
                 dn = denoiser if cond.denoise else None
-                hyp_text = transcribe_text(transcriber, signal, dn, tmp)
+                hyp_text, processing_seconds = transcribe_text(
+                    transcriber,
+                    signal,
+                    dn,
+                    tmp,
+                    file_stem=f"{sample.name}_{cond.snr}_{cond_index}",
+                )
                 hyp = tokenize(hyp_text)
                 cond.tally.add(ref, hyp)
                 per_clip_rows.append(
@@ -368,6 +398,8 @@ def run(args: argparse.Namespace) -> int:
                         "denoise": cond.denoise,
                         "ref": sample.text,
                         "hyp": hyp_text,
+                        "audio_duration_seconds": round(sample.audio.size / SAMPLE_RATE, 4),
+                        "processing_seconds": round(processing_seconds, 4),
                         **{k: v for k, v in _clip_metrics(ref, hyp).items()},
                     }
                 )
@@ -395,6 +427,19 @@ def run(args: argparse.Namespace) -> int:
         summary = {
             "backend": backend,
             "model": args.model,
+            "device": args.device,
+            "compute_type": args.compute_type,
+            "language": "es",
+            "beam_size": 1,
+            "seed": args.seed,
+            "sample_rate_hz": SAMPLE_RATE,
+            "normalization": "lowercase; non-word punctuation replaced with separators; underscores trimmed",
+            "snr_reference": "active-speech RMS (samples above 10% of peak amplitude)",
+            "paired_raw_denoise_inputs": True,
+            "runtime": {
+                "python": platform.python_version(),
+                "platform": platform.platform(),
+            },
             "noise": args.noise,
             "noise_file": args.noise_file,
             "clips": len(samples),

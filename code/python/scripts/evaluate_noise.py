@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import statistics
@@ -304,13 +305,31 @@ def build_transcriber(backend: str, model: str, device: str, compute_type: str):
     )
 
 
-def transcribe_text(transcriber, signal: np.ndarray, denoise: NoiseReduceDenoiser | None, tmp: Path) -> str:
+def signal_sha256(signal: np.ndarray) -> str:
+    """Fingerprint the exact PCM input shared by paired denoise conditions."""
+    pcm = (np.clip(signal, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+    return hashlib.sha256(pcm).hexdigest()
+
+
+def transcribe_text(
+    transcriber,
+    signal: np.ndarray,
+    denoise: NoiseReduceDenoiser | None,
+    tmp: Path,
+) -> tuple[str, bool]:
+    """Transcribe one signal and fail closed if requested denoising did not run."""
     path = tmp / "clip.wav"
     write_wav_mono(path, signal)
+    denoise_applied = False
     if denoise is not None:
-        denoise.denoise(path)
+        denoise_applied = denoise.denoise(path)
+        if not denoise_applied:
+            raise RuntimeError(
+                "Denoising was requested but noisereduce did not process the WAV. "
+                "Install noisereduce and check that the input is a valid 16-bit PCM WAV."
+            )
     words = transcriber.transcribe(path, chunk_index=0)
-    return " ".join(w.word for w in words)
+    return " ".join(w.word for w in words), denoise_applied
 
 
 def run(args: argparse.Namespace) -> int:
@@ -340,10 +359,14 @@ def run(args: argparse.Namespace) -> int:
     transcriber = build_transcriber(backend, args.model, args.device, args.compute_type)
     denoiser = NoiseReduceDenoiser(prop_decrease=0.8, stationary=False)
     if args.denoise in ("on", "both") and not denoiser._available:  # noqa: SLF001 - intentional capability probe
-        print("warning: noisereduce not installed; denoise conditions become no-ops", file=sys.stderr)
+        print("error: --denoise requires the noisereduce package, but it is unavailable", file=sys.stderr)
+        return 2
 
     denoise_modes = {"off": [False], "on": [True], "both": [False, True]}[args.denoise]
     conditions = [Condition(snr, dn) for snr in args.snr for dn in denoise_modes]
+    saved_inputs = Path(args.save_noisy_dir) if args.save_noisy_dir else None
+    if saved_inputs:
+        saved_inputs.mkdir(parents=True, exist_ok=True)
 
     # ---- evaluate -------------------------------------------------------- #
     per_clip_rows: list[dict[str, object]] = []
@@ -351,14 +374,25 @@ def run(args: argparse.Namespace) -> int:
         tmp = Path(tmp_name)
         for sample in samples:
             ref = tokenize(sample.text)
-            for cond in conditions:
-                if cond.snr == "clean":
+
+            # Generate each clip/SNR input exactly once.  The denoise off/on
+            # conditions below use this same ndarray, which makes the contrast
+            # paired rather than a comparison of two different noise draws.
+            signals_by_snr: dict[str, np.ndarray] = {}
+            for snr in args.snr:
+                if snr == "clean":
                     signal = sample.audio
                 else:
                     noise = noise_clip if noise_clip is not None else make_noise(args.noise, sample.audio.size, rng)
-                    signal = mix_at_snr(sample.audio, noise, float(cond.snr), rng)
+                    signal = mix_at_snr(sample.audio, noise, float(snr), rng)
+                signals_by_snr[snr] = signal
+                if saved_inputs:
+                    write_wav_mono(saved_inputs / f"{sample.name}_snr_{snr}.wav", signal)
+
+            for cond in conditions:
+                signal = signals_by_snr[cond.snr]
                 dn = denoiser if cond.denoise else None
-                hyp_text = transcribe_text(transcriber, signal, dn, tmp)
+                hyp_text, denoise_applied = transcribe_text(transcriber, signal, dn, tmp)
                 hyp = tokenize(hyp_text)
                 cond.tally.add(ref, hyp)
                 per_clip_rows.append(
@@ -366,6 +400,8 @@ def run(args: argparse.Namespace) -> int:
                         "clip": sample.name,
                         "snr": cond.snr,
                         "denoise": cond.denoise,
+                        "denoise_applied": denoise_applied,
+                        "input_sha256": signal_sha256(signal),
                         "ref": sample.text,
                         "hyp": hyp_text,
                         **{k: v for k, v in _clip_metrics(ref, hyp).items()},
@@ -397,6 +433,15 @@ def run(args: argparse.Namespace) -> int:
             "model": args.model,
             "noise": args.noise,
             "noise_file": args.noise_file,
+            "seed": args.seed,
+            "paired_input_reused_for_denoise_comparison": True,
+            "saved_input_directory": str(saved_inputs) if saved_inputs else None,
+            "denoiser": {
+                "backend": "noisereduce" if args.denoise in ("on", "both") else "disabled",
+                "available": denoiser._available,  # noqa: SLF001 - run provenance
+                "prop_decrease": 0.8,
+                "stationary": False,
+            },
             "clips": len(samples),
             "conditions": [
                 {"snr": c.snr, "denoise": c.denoise, **c.tally.as_row()} for c in conditions
@@ -442,6 +487,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     p.add_argument("--out", help="path prefix for the .json + .csv result files")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--save-noisy-dir",
+        help=("optional directory for the exact paired input WAVs. Use one directory per seed; "
+              "these WAVs are written before denoising and shared by the off/on conditions"),
+    )
     return p
 
 

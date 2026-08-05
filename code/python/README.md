@@ -82,11 +82,20 @@ confidence filtering, and Silero VAD together.
 # Dry run (no audio or model required):
 python -m scripts.evaluate_noise --selftest
 
-# Real run over clip.wav + clip.txt pairs, denoise off vs on, across SNRs:
-python -m scripts.evaluate_noise --audio-dir data\clips --snr clean 20 10 5 0 --denoise both --out results\noise_eval
+# Paired run: each clip/SNR input is generated once, then reused unchanged for
+# denoise off and on.  Keep the saved WAVs and CSV input_sha256 column as an
+# audit trail.  Use a distinct input directory and result prefix per seed.
+python -m scripts.evaluate_noise --audio-dir data\clips --snr clean 20 10 5 0 --noise white --denoise both --model base --seed 42 --save-noisy-dir results\paired_inputs\seed_42 --out results\noise_eval_seed_42
 ```
 
 Outputs WER, word-loss rate, hallucination rate per condition and writes
-`.json` + `.csv` for the report.
+`.json` + `.csv` for the report. The run now stops if `--denoise on` or
+`--denoise both` is requested but `noisereduce` is unavailable or fails to
+process a WAV; it never silently treats a denoise condition as a no-op.
+
+For a thesis result, repeat the paired command with at least five fixed seeds
+(for example 42--46), preserving one result prefix and one `paired_inputs`
+directory per seed. Compare the resulting WER values as paired observations;
+do not compare conditions generated from different noise draws.
 
 Relative `STRUDEL_SAMPLES_ROOT` values are resolved from this `code/python` directory, so the service writes to the same place even if it is launched from a different working directory.

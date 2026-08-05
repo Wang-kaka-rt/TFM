@@ -98,4 +98,52 @@ For a thesis result, repeat the paired command with at least five fixed seeds
 directory per seed. Compare the resulting WER values as paired observations;
 do not compare conditions generated from different noise draws.
 
+The raw and denoised conditions use the same deterministic noisy waveform for
+each clip/SNR pair, so their difference is a paired denoising comparison rather
+than an artefact of different random noise draws. The JSON report records the
+normalisation rule, SNR reference, seed, ASR configuration, and runtime.
+
+## Clean-audio model and latency benchmark
+
+Use this command for the model-selection table in the thesis. It reports WER,
+per-clip latency, real-time factor (RTF), median/p95 latency, and the individual
+transcripts used to calculate every aggregate value.
+
+```powershell
+python -m scripts.benchmark_models --audio-dir data\clips `
+  --models tiny base small --repeats 3 --out results\model_benchmark
+```
+
+The benchmark measures only the `faster-whisper` transcription call, excluding
+model load and WAV preparation. This scope is recorded in the output JSON and
+must be stated when reporting latency in the thesis.
+
+## Build thesis tables from existing results (no model execution)
+
+When a computer cannot run the models, generate the thesis tables directly from
+the retained JSON artifacts. This command does not load a model, modify audio,
+or download a dependency:
+
+```powershell
+python -m scripts.build_thesis_results `
+  --results-dir ..\..\Resume-or-Thesis\Thesis\提交版本\experimental_materials\results `
+  --out-dir ..\..\Resume-or-Thesis\Thesis\提交版本\experimental_materials\derived_results
+```
+
+It writes model and noise CSV tables, a Spanish results fragment, and a
+provenance JSON that records the original source files.
+
+On slower hardware, execute the corpus in non-overlapping batches and merge the
+raw evidence afterwards. This avoids losing a long run to a time limit while
+preserving one row per `(model, clip, repeat)`:
+
+```powershell
+python -m scripts.benchmark_models --audio-dir data\clips --models base small `
+  --repeats 3 --start-index 0 --max-clips 5 --out results\model_part_00
+python -m scripts.benchmark_models --audio-dir data\clips --models base small `
+  --repeats 3 --start-index 5 --max-clips 5 --out results\model_part_05
+python -m scripts.merge_model_benchmarks results\model_part_*.csv `
+  --out results\model_benchmark
+```
+
 Relative `STRUDEL_SAMPLES_ROOT` values are resolved from this `code/python` directory, so the service writes to the same place even if it is launched from a different working directory.

@@ -5,7 +5,7 @@ from io import BytesIO
 
 import pytest
 
-from app.core.config import Settings
+from app.core.config import PYTHON_SERVICE_ROOT, Settings
 from app.services import recorder as recorder_module
 from app.services.session_service import SessionService
 from app.services.transcriber import MockTranscriber, clean_token
@@ -16,7 +16,7 @@ def test_relative_samples_root_resolves_from_python_service_dir():
 
     assert settings.samples_root.is_absolute()
     assert settings.samples_root.name == "samples"
-    assert settings.samples_root.parent.name == "TFM"
+    assert settings.samples_root.parent == PYTHON_SERVICE_ROOT.parent.parent
 
 
 def test_spanish_tokens_are_used_for_mock_and_cleaning(tmp_path):

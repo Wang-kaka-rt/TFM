@@ -72,8 +72,34 @@ if [[ ! -f /etc/debian_version ]]; then
 fi
 
 say "Installing system dependencies"
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl ffmpeg git libportaudio2 libsndfile1 python3 python3-venv rsync xz-utils
+missing_packages=()
+command -v ffmpeg >/dev/null 2>&1 || missing_packages+=(ffmpeg)
+command -v python3 >/dev/null 2>&1 || missing_packages+=(python3)
+command -v rsync >/dev/null 2>&1 || missing_packages+=(rsync)
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -m venv --help >/dev/null 2>&1; then
+  missing_packages+=(python3-venv)
+fi
+if ! ldconfig -p 2>/dev/null | grep -F 'libportaudio.so' >/dev/null; then
+  missing_packages+=(libportaudio2)
+fi
+if ! ldconfig -p 2>/dev/null | grep -F 'libsndfile.so' >/dev/null; then
+  missing_packages+=(libsndfile1)
+fi
+# curl and xz are only needed when this machine does not already have a usable
+# Node.js runtime. Git is needed for `git clone` before this script is run, not
+# for an already-cloned checkout.
+if ! node_ok; then
+  command -v curl >/dev/null 2>&1 || missing_packages+=(curl ca-certificates)
+  command -v xz >/dev/null 2>&1 || missing_packages+=(xz-utils)
+fi
+
+if [[ ${#missing_packages[@]} -gt 0 ]]; then
+  echo "Installing missing packages: ${missing_packages[*]}"
+  sudo apt-get update
+  sudo apt-get install -y ca-certificates "${missing_packages[@]}"
+else
+  echo "System dependencies are already installed."
+fi
 
 if ! python_ok; then
   echo "Python 3.10 or later is required; current python3 is too old." >&2

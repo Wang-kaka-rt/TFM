@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     session_poll_interval_seconds: float = 0.05
     transcriber_backend: str = "mock"
     faster_whisper_model: str = "base"
+    # Directory containing a pre-downloaded faster-whisper Hugging Face cache.
+    # The Linux release launcher sets this to its bundled assets/models folder.
+    faster_whisper_download_root: Path | None = None
     faster_whisper_device: str = "auto"
     faster_whisper_compute_type: str = "int8"
     faster_whisper_beam_size: int = 5

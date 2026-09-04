@@ -57,6 +57,7 @@ class FasterWhisperTranscriber(BaseTranscriber):
         self,
         model_name: str = "base",
         *,
+        download_root: Path | None = None,
         device: str = "auto",
         compute_type: str = "int8",
         beam_size: int = 1,
@@ -75,7 +76,12 @@ class FasterWhisperTranscriber(BaseTranscriber):
             raise RuntimeError(
                 "faster-whisper is not installed. Install it or use STRUDEL_TRANSCRIBER_BACKEND=mock."
             ) from exc
-        self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        self._model = WhisperModel(
+            model_name,
+            device=device,
+            compute_type=compute_type,
+            download_root=None if download_root is None else str(download_root),
+        )
         # Surface what ctranslate2 actually resolved (device="auto" -> cuda/cpu) for diagnostics.
         inner = getattr(self._model, "model", None)
         self.device = getattr(inner, "device", None) or (device if device != "auto" else None)
@@ -133,6 +139,7 @@ def create_transcriber(
     seed_words: list[str],
     *,
     faster_whisper_model: str = "base",
+    faster_whisper_download_root: Path | None = None,
     faster_whisper_device: str = "auto",
     faster_whisper_compute_type: str = "int8",
     faster_whisper_beam_size: int = 1,
@@ -147,6 +154,7 @@ def create_transcriber(
     if backend == "faster-whisper":
         return FasterWhisperTranscriber(
             model_name=faster_whisper_model,
+            download_root=faster_whisper_download_root,
             device=faster_whisper_device,
             compute_type=faster_whisper_compute_type,
             beam_size=faster_whisper_beam_size,

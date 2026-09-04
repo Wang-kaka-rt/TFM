@@ -2,7 +2,7 @@
 # Build a self-contained Linux binary for Strudel Voice.
 #
 # Usage:
-#   ./scripts/build_linux.sh [--include-heavy-asr] [--strudel-dist PATH] [--skip-sync-strudel]
+#   ./scripts/build_linux.sh --include-heavy-asr --bundle-model base
 #
 # Requirements (Ubuntu/Debian):
 #   sudo apt install python3.10+ ffmpeg libsndfile1 portaudio19-dev
@@ -14,12 +14,14 @@
 set -euo pipefail
 
 INCLUDE_HEAVY_ASR=false
+MODEL_NAME=""
 STRUDEL_DIST="../strudel-src-real/website/dist"
 SKIP_SYNC_STRUDEL=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --include-heavy-asr) INCLUDE_HEAVY_ASR=true ;;
+        --bundle-model)      MODEL_NAME="$2"; shift ;;
         --strudel-dist)      STRUDEL_DIST="$2"; shift ;;
         --skip-sync-strudel) SKIP_SYNC_STRUDEL=true ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -63,18 +65,30 @@ else
     python3 -m pip install -r requirements.txt
 fi
 
+if [[ -n "$MODEL_NAME" ]]; then
+    if [[ "$INCLUDE_HEAVY_ASR" != true ]]; then
+        echo "ERROR: --bundle-model requires --include-heavy-asr." >&2; exit 1
+    fi
+    echo "[2/4] Downloading faster-whisper model '$MODEL_NAME' for offline use..."
+    mkdir -p assets/models
+    python3 - <<PY
+from faster_whisper import WhisperModel
+WhisperModel("$MODEL_NAME", device="cpu", compute_type="int8", download_root="assets/models")
+PY
+fi
+
 # ── 3. Install PyInstaller (no pywebview needed on Linux) ───────────────────
-echo "[2/3] Installing PyInstaller..."
+echo "[3/4] Installing PyInstaller..."
 python3 -m pip install "pyinstaller>=6.11,<7.0"
 
 # ── 4. Build binary ──────────────────────────────────────────────────────────
-echo "[3/3] Building binary with PyInstaller..."
+echo "[4/4] Building portable application..."
 
 PYINSTALLER_ARGS=(
     --noconfirm
     --clean
     --name strudel-voice
-    --onefile
+    --onedir
     --collect-data app
     --hidden-import uvicorn
     --hidden-import uvicorn.config
@@ -128,10 +142,10 @@ done
 python3 -m PyInstaller "${PYINSTALLER_ARGS[@]}" packaging/launcher.py
 
 echo ""
-echo "✓ Build complete: dist/strudel-voice"
+echo "✓ Build complete: dist/strudel-voice/strudel-voice"
 echo ""
 echo "Run with:"
-echo "  ./dist/strudel-voice"
+echo "  ./dist/strudel-voice/strudel-voice"
 echo ""
 echo "System dependencies required at runtime (Ubuntu/Debian):"
 echo "  sudo apt install ffmpeg portaudio19-dev libsndfile1"

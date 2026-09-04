@@ -145,6 +145,9 @@ def configure_runtime_defaults(logger: logging.Logger) -> None:
         "STRUDEL_SAMPLES_ROOT": str(default_samples_root),
         "STRUDEL_CHUNK_DURATION_SECONDS": "1.5" if is_windows_arm else "2.5",
     }
+    bundled_models = resolve_runtime_root() / "assets" / "models"
+    if bundled_models.is_dir():
+        defaults["STRUDEL_FASTER_WHISPER_DOWNLOAD_ROOT"] = str(bundled_models)
     for key, value in defaults.items():
         if key not in os.environ:
             os.environ[key] = value

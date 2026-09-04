@@ -33,15 +33,16 @@
 **/.idea/
 **/.vscode/
 
+# Build artifacts (dist)
+**/dist/
+
 # TypeScript / Node build artifacts
 **/*.tsbuildinfo
-code/node/dist/
 code/node/*.out.log
 code/node/*.err.log
 
 # Python packaging/build artifacts
 code/python/build/
-code/python/dist/
 code/python/*.out.log
 code/python/*.err.log
 code/python/build_exe.log

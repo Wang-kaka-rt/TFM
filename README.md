@@ -6,9 +6,9 @@ Strudel Voice is a local prototype for recording voice, slicing recognized words
 
 ## How it works
 
-1. Click **Iniciar** in the floating panel → the backend records your voice in chunks, transcribes each chunk with faster-whisper, and slices the audio into word / phrase / sentence / letter samples in real time.
-2. Click **Detener** → recording stops and all samples are finalized.
-3. Select a granularity level and click **Importar** → samples are registered directly into Strudel's sound engine.
+1. Click the **Voice** record button → the browser captures your microphone, the backend transcribes it with faster-whisper, and audio is cut into sentence / phrase / word / syllable / letter samples.
+2. Click the button again to stop → the final audio is processed and all samples are finalised.
+3. Samples are imported automatically into Strudel. Open the **voice** tab to browse them; after a page reload, samples for the current `BANKNAME` are restored automatically.
 4. Type `s('hola')` in the Strudel editor → your voice plays.
 
 ---
@@ -86,74 +86,58 @@ Open `http://127.0.0.1:8787` in a browser.
 
 ## Linux
 
-### Requirements
+### Recommended source setup (Ubuntu/Debian)
 
-- Python 3.10 or newer
-- Node.js 18 or newer + `pnpm`
-- System audio libraries
-
-**Ubuntu / Debian:**
+For a reproducible setup from a fresh clone, use the automated scripts rather
+than manually installing Python, Node.js, pnpm, frontend assets, and speech
+dependencies.
 
 ```bash
-sudo apt install ffmpeg portaudio19-dev libsndfile1
+git clone <repository-url> strudel-voice
+cd strudel-voice/code
+
+# Read-only diagnostic: shows what is installed or missing.
+bash scripts/setup_linux_source.sh --check
+
+# Installs missing dependencies, builds Strudel, and downloads the local model.
+# The first run needs internet access and sudo permission.
+bash scripts/setup_linux_source.sh
+
+# Starts the source version.
+bash scripts/run_linux_source.sh
 ```
 
-**Fedora / RHEL:**
+The setup script supports Ubuntu/Debian and automatically checks or prepares:
+
+- FFmpeg, PortAudio, libsndfile, Python 3.10+, Node.js 20, and pnpm;
+- the Python virtual environment and CPU-only ASR dependencies;
+- the Strudel frontend build and static-asset synchronisation;
+- the local `faster-whisper` `base` model for later offline launches.
+
+When the terminal prints `Application startup complete.`, open
+`http://127.0.0.1:8787/` in Firefox or Chrome and grant microphone permission.
+Linux uses browser microphone capture by default, avoiding ALSA/PortAudio
+device-selection problems on VMs and different sound cards. Press **Ctrl+C**
+to stop the server.
+
+For detailed Linux troubleshooting and configuration, see
+[`code/python/README.md`](code/python/README.md).
+
+### Run the portable Linux release
+
+If you received the prebuilt `strudel-voice` release directory instead of the
+source code, keep the entire directory together and run:
 
 ```bash
-sudo dnf install ffmpeg portaudio-devel libsndfile
+cd strudel-voice
+chmod +x install.sh strudel-voice
+./install.sh       # required once per computer
+./strudel-voice
 ```
 
-### Build the binary
-
-```bash
-# 1. Build Strudel frontend
-cd code/strudel-src-real
-pnpm i
-pnpm build
-
-# 2. Build the binary
-cd code/python
-chmod +x scripts/build_linux.sh
-./scripts/build_linux.sh
-```
-
-Output: `code/python/dist/strudel-voice`
-
-Python and all pip packages are bundled inside — no Python installation needed to run it.
-
-### Run
-
-```bash
-./dist/strudel-voice
-```
-
-The backend starts on `127.0.0.1:8787` and opens your default browser automatically.
-Press **Ctrl+C** to stop.
-
-### Use the control panel
-
-Same as Windows. The **"Voice"** button appears in the bottom-right corner of the browser page.
-
-| Step | Action |
-|------|--------|
-| 1 | Click the **"Voice"** button (bottom-right) |
-| 2 | Enter a session ID, e.g. `demo01` |
-| 3 | Click **Iniciar** to start recording |
-| 4 | Click **Detener** to stop and finalize samples |
-| 5 | Choose a level: **Oraciones / Frases / Palabras / Letras** |
-| 6 | Click **Importar** — samples load into Strudel instantly |
-| 7 | Use `s('word')` in the editor to play your voice |
-
-### Run in development (no binary)
-
-```bash
-cd code/python
-pip install -r requirements.txt
-python3 -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8787
-```
-
-Open `http://127.0.0.1:8787` in a browser.
+No Python, Node.js, pnpm, or model download is required for the portable
+release. It supports Ubuntu/Debian x86_64 and still requires a desktop browser
+with microphone permission.
 
 ---
 

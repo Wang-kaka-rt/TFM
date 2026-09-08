@@ -47,7 +47,8 @@ if [[ ! -d "$FRONTEND_DIR" || ! -f "$FRONTEND_DIR/package.json" ]]; then
   exit 1
 fi
 if [[ ! -f "$PYTHON_DIR/requirements.linux-portable.txt" ]]; then
-  echo "Python service not found: $PYTHON_DIR" >&2
+  echo "Linux Python dependency file not found: $PYTHON_DIR/requirements.linux-portable.txt" >&2
+  echo "This checkout is incomplete. Re-clone the repository or update it with git pull." >&2
   exit 1
 fi
 

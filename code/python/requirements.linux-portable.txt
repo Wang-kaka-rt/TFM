@@ -1,0 +1,4 @@
+# Additional dependencies required by the Linux source and portable builds.
+# Keep the shared application dependencies in requirements.txt.
+-r requirements.txt
+noisereduce>=3.0,<4.0

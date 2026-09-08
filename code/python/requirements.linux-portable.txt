@@ -1,4 +1,9 @@
 # Additional dependencies required by the Linux source and portable builds.
+# These versions are pinned to avoid pip resolver backtracking or source builds
+# on a clean Ubuntu/Python 3.10 installation.
 # Keep the shared application dependencies in requirements.txt.
 -r requirements.txt
-noisereduce>=3.0,<4.0
+numpy==2.2.6
+scipy==1.15.3
+matplotlib==3.10.9
+noisereduce==3.0.3

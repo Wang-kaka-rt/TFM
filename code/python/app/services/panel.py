@@ -2357,7 +2357,15 @@ def control_panel_script(default_session_id: str) -> str:
     if (!sessionId) {{
       throw new Error("BankName no puede estar vacio.");
     }}
-    const session = await fetchSessionStatus(sessionId);
+    // A server restart clears the in-memory session list, while the generated
+    // samples.json remains durable on disk. Missing status is therefore valid
+    // for a restore; fetchManifest below is the authoritative existence check.
+    let session = null;
+    try {{
+      session = await fetchSessionStatus(sessionId);
+    }} catch (_missingSession) {{
+      session = null;
+    }}
     if (session?.state === "recording" || session?.state === "processing") {{
       throw new Error("Deten la grabacion o espera a que termine el procesamiento antes de restaurar las muestras.");
     }}

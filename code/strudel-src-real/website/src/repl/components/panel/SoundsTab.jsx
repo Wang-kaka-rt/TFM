@@ -267,18 +267,23 @@ export function SoundsTab() {
 
   const renderSound = ([name, { data, onTrigger }]) => {
     const isVoice = data?.tag === 'voice';
+    const voiceName = isVoice ? parseVoiceName(name) : null;
     // Voice list shows the bare text (strip the `<bank>_` grouping prefix); every
     // other tab shows the registration key as-is.
-    const displayName = isVoice ? parseVoiceName(name).base : name;
+    const displayName = isVoice ? voiceName.base : name;
+    // Bare names are reserved for words. Other voice levels retain their
+    // grouping prefix so identical text from multiple levels cannot resolve to
+    // the wrong audio clip.
+    const insertName = isVoice && voiceName.bank && voiceName.bank !== 'palabras' ? name : displayName;
     // Double-click inserts the bare text when the caret is inside a string (drop it
     // into an existing s("…")), otherwise a full s("…") call.
     return (
       <span
         key={name}
         className="cursor-pointer hover:opacity-50"
-        title={`Click: probar · Doble clic: insertar ${displayName} / s("${displayName}")`}
+        title={`Click: probar · Doble clic: insertar ${insertName} / s("${insertName}")`}
         onMouseDown={() => playSound(name, data, onTrigger, numRef.current)}
-        onDoubleClick={() => insertToken(displayName)}
+        onDoubleClick={() => insertToken(insertName)}
       >
         {' '}
         {displayName}

@@ -1250,15 +1250,15 @@ def control_panel_script(default_session_id: str) -> str:
   // the sounds panel still comes from the bank-prefixed `combined` map above.
   const buildFlatSampleMap = (manifest) => {{
     const flat = {{}};
-    for (const [level] of LEVEL_BANKS) {{
-      const items = Array.isArray(manifest?.[level]) ? manifest[level] : [];
-      for (const item of items) {{
-        const base = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
-        if (!flat[base]) {{
-          flat[base] = [];
-        }}
-        flat[base].push(item.url);
+    // Bare names belong to words only. Mixing all recognition levels under a
+    // label like "no" makes voice playback ambiguous.
+    const items = Array.isArray(manifest?.words) ? manifest.words : [];
+    for (const item of items) {{
+      const base = (item.text || item.name).replace(/\\s+/g, "_").toLowerCase() || item.name;
+      if (!flat[base]) {{
+        flat[base] = [];
       }}
+      flat[base].push(item.url);
     }}
     return flat;
   }};

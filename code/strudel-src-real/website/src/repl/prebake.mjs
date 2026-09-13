@@ -160,6 +160,11 @@ export async function prebake() {
 
   // Expose samples() for the voice control panel to register recordings directly.
   window.strudelSamples = samples;
+  // The Strudel Voice panel is injected by the Python server and can load before
+  // this asynchronous prebake step. Signal the precise moment sample
+  // registration becomes available so saved voice/mix banks are restored even
+  // on a slow first page load.
+  window.dispatchEvent(new Event('strudel-samples-ready'));
 
   // Give the editor autocomplete a live reference to the sound registry so
   // s('...') / .bank('...') can complete imported voice samples and banks.

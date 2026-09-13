@@ -2339,6 +2339,14 @@ def control_panel_script(default_session_id: str) -> str:
     setStatus(`Se limpio '${{tag || "voice"}}'. Para volver a cargar este banco, pulsa Importar o inicia una nueva grabacion.`);
   }});
 
+  // The Strudel app initialises its sample registry asynchronously.  This event
+  // closes the race where a saved manifest was fetched before strudelSamples
+  // existed, leaving the voice/mix tabs visually empty after a page reload.
+  window.addEventListener("strudel-samples-ready", () => {{
+    state.autoImportSignature = "";
+    void restorePersistedSamples();
+  }});
+
   openButton.addEventListener("click", () => {{
     overlay.style.display = "flex";
     setStatus("");

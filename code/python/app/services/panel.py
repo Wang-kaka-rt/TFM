@@ -2293,6 +2293,26 @@ def control_panel_script(default_session_id: str) -> str:
     if (!files || !files.length) {{
       throw new Error("Selecciona al menos un archivo de audio.");
     }}
+    // The panel is injected into Strudel and can survive a browser refresh.
+    // Reconcile the local flags with the service before refusing an import:
+    // otherwise an old "processing" flag can permanently block a new folder
+    // even though the backend session has already stopped.
+    if (state.isRecording || state.isProcessing) {{
+      try {{
+        const session = await fetchSessionStatus(sessionId);
+        if (session?.state === "stopped" || session?.state === "failed") {{
+          state.isRecording = false;
+          state.isUploading = false;
+          state.isProcessing = false;
+          stopStopPolling();
+          stopRecordingClock();
+          refreshControls();
+        }}
+      }} catch (_statusError) {{
+        // Leave the safety guard enabled when the current state cannot be
+        // verified. The following error tells the user not to import yet.
+      }}
+    }}
     if (state.isRecording || state.busy || state.isUploading || state.isProcessing) {{
       throw new Error("Deten la grabacion o espera a que termine el procesamiento antes de importar.");
     }}

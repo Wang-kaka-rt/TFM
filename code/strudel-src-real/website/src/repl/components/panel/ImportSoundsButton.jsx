@@ -1,5 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 
+const SUPPORTED_AUDIO = /\.(wav|mp3|m4a|flac|aac|ogg|opus|webm)$/i;
+
 // The upstream Strudel control stores selected files in IndexedDB and labels
 // them "user". Strudel Voice sends them to its local backend so speech can be
 // transcribed, sliced, and registered in the voice/mix banks.
@@ -8,10 +10,18 @@ export default function ImportSoundsButton({ onComplete }) {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState('');
   const onChange = useCallback(async () => {
-    const files = Array.from(fileUploadRef.current?.files || []);
-    if (!files.length) return;
+    const selectedFiles = Array.from(fileUploadRef.current?.files || []);
+    if (!selectedFiles.length) return;
+    // Folder pickers can include .DS_Store, README files and thumbnails. Send
+    // only formats the backend can decode, protecting the selected voice bank.
+    const files = selectedFiles.filter((file) => SUPPORTED_AUDIO.test(file.name));
+    if (!files.length) {
+      setError('No supported audio files were found in the selected folder.');
+      if (fileUploadRef.current) fileUploadRef.current.value = '';
+      return;
+    }
     setIsUploading(true);
-    setError('');
+    setError(files.length === selectedFiles.length ? '' : `Ignored ${selectedFiles.length - files.length} non-audio file(s).`);
     try {
       if (typeof window.strudelVoiceImportAudioPack !== 'function') {
         throw new Error('Strudel Voice is still loading. Refresh the page and try again.');

@@ -171,6 +171,7 @@ async def import_audio_pack(
         payload = [(upload.filename or "audio", await upload.read()) for upload in files]
         return await session_service.import_audio_pack(session_id, payload)
     except RuntimeError as exc:
+        logger.warning("Audio-pack import rejected for '%s': %s", session_id, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         for upload in files:

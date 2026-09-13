@@ -297,3 +297,23 @@ def test_import_audio_pack_transcribes_and_generates_durable_manifest(tmp_path):
     manifest = json.loads((tmp_path / "samples" / "pack01" / "samples.json").read_text(encoding="utf-8"))
     assert manifest["words"]
     assert (tmp_path / "samples" / "pack01" / "words").is_dir()
+
+
+def test_import_audio_pack_rejects_non_audio_without_erasing_existing_bank(tmp_path):
+    service = SessionService(
+        Settings(
+            samples_root=tmp_path / "samples",
+            recorder_backend="mock",
+            transcriber_backend="mock",
+            mock_transcript_words=["hola"],
+        )
+    )
+
+    asyncio.run(service.import_audio_pack("bank01", [("voice.wav", _build_wav_bytes())]))
+    manifest_path = tmp_path / "samples" / "bank01" / "samples.json"
+    before = manifest_path.read_text(encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Unsupported audio type"):
+        asyncio.run(service.import_audio_pack("bank01", [("README.txt", b"not audio")]))
+
+    assert manifest_path.read_text(encoding="utf-8") == before

@@ -302,6 +302,17 @@ class SessionService:
         """
         if not files:
             raise RuntimeError("No audio files were selected.")
+        # Validate every uploaded name before touching an existing BankName. A
+        # browser folder selection may include metadata such as .DS_Store or
+        # README files; those must never erase existing generated samples.
+        validated_files: list[tuple[str, bytes]] = []
+        for uploaded_name, audio_bytes in files:
+            if not audio_bytes:
+                continue
+            self._safe_import_file_name(uploaded_name)
+            validated_files.append((uploaded_name, audio_bytes))
+        if not validated_files:
+            raise RuntimeError("No non-empty supported audio files were received.")
         if self._settings.transcriber_backend != "mock" and self._effective_transcriber_backend == "mock":
             raise RuntimeError(
                 "Real speech recognition is unavailable; "
@@ -322,9 +333,7 @@ class SessionService:
 
             processed_files = 0
             try:
-                for uploaded_name, audio_bytes in files:
-                    if not audio_bytes:
-                        continue
+                for uploaded_name, audio_bytes in validated_files:
                     runtime.next_chunk_index += 1
                     chunk_index = runtime.next_chunk_index
                     source_path = self._write_imported_audio(
@@ -349,6 +358,7 @@ class SessionService:
                 session = self._manager.stop(session_id)
             except Exception as exc:
                 self._manager.fail(session_id, str(exc))
+                logger.exception("Audio-pack import failed for session '%s'", session_id)
                 raise
 
         return {

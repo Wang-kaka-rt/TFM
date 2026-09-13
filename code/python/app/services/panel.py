@@ -1311,6 +1311,12 @@ def control_panel_script(default_session_id: str) -> str:
     if (typeof strudelSamples !== "function") {{
       throw new Error("Strudel aun no esta listo. Espera a que cargue completamente.");
     }}
+    // mix uses a fixed set of keys and overwrites naturally, but voice uses one
+    // key per recognised text. Clear both tags first so a second import cannot
+    // leave words or phrases that existed only in the previous BankName.
+    if (typeof window.strudelVoiceClearSampleTags === "function") {{
+      window.strudelVoiceClearSampleTags(["voice", "mix"]);
+    }}
     // The "voice" tab is registered with bare names only (see `flat` below), so
     // clicking a sound inserts a clean s("hola"). The bank-prefixed `combined`
     // map is still built above (for the import signature and the summary counts)

@@ -55,12 +55,32 @@ const notifyVoiceSamplesCleared = (tag) => {
   window.dispatchEvent(new CustomEvent('strudel-voice:samples-cleared', { detail: { tag } }));
 };
 
+// Replace only Strudel Voice's transient registrations. This deliberately
+// preserves built-in samples, drum machines, synths and IndexedDB user sounds.
+const clearStrudelVoiceTags = (tags = ['voice', 'mix']) => {
+  const selected = new Set(tags);
+  const remaining = { ...soundMap.get() };
+  for (const key of Object.keys(remaining)) {
+    if (selected.has(remaining[key]?.data?.tag)) {
+      delete remaining[key];
+    }
+  }
+  soundMap.set(remaining);
+};
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function SoundsTab() {
   const sounds = useStore(soundMap);
+
+  // The server-side voice panel is injected after this React component. Expose
+  // a small synchronous bridge so every import replaces old voice/mix keys
+  // before new samples are registered.
+  if (typeof window !== 'undefined') {
+    window.strudelVoiceClearSampleTags = clearStrudelVoiceTags;
+  }
 
   const { soundsFilter } = useSettings();
   const [search, setSearch] = useState('');

@@ -40,23 +40,43 @@ export default function ImportSoundsButton({ onComplete }) {
   return (
     <div>
       <label
-        style={{ alignItems: 'center', borderColor: 'red', border: 1 }}
-        className="flex bg-background  p-4  w-fit rounded-xl hover:opacity-50 whitespace-nowrap cursor-pointer"
+        style={{
+          alignItems: 'center',
+          opacity: isUploading ? 0.7 : 1,
+          cursor: isUploading ? 'wait' : 'pointer',
+        }}
+        className="flex bg-background p-4 w-fit rounded-xl hover:opacity-50 whitespace-nowrap cursor-pointer"
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          strokeWidth={1.5}
-          stroke="currentColor"
-          className="size-6 mr-2"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M7.5 7.5h-.75A2.25 2.25 0 0 0 4.5 9.75v7.5a2.25 2.25 0 0 0 2.25 2.25h7.5a2.25 2.25 0 0 0 2.25-2.25v-7.5a2.25 2.25 0 0 0-2.25-2.25h-.75m0-3-3-3m0 0-3 3m3-3v11.25m6-2.25h.75a2.25 2.25 0 0 1 2.25 2.25v7.5a2.25 2.25 0 0 1-2.25 2.25h-7.5a2.25 2.25 0 0 1-2.25-2.25v-.75"
+        {isUploading ? (
+          <span
+            aria-label="Analysing audio"
+            role="status"
+            className="animate-spin"
+            style={{
+              width: 20,
+              height: 20,
+              marginRight: 10,
+              border: '3px solid currentColor',
+              borderRightColor: 'transparent',
+              borderRadius: '50%',
+            }}
           />
-        </svg>
+        ) : (
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="size-6 mr-2"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M7.5 7.5h-.75A2.25 2.25 0 0 0 4.5 9.75v7.5a2.25 2.25 0 0 0 2.25 2.25h7.5a2.25 2.25 0 0 0 2.25-2.25v-7.5a2.25 2.25 0 0 0-2.25-2.25h-.75m0-3-3-3m0 0-3 3m3-3v11.25m6-2.25h.75a2.25 2.25 0 0 1 2.25 2.25v7.5a2.25 2.25 0 0 1-2.25 2.25h-7.5a2.25 2.25 0 0 1-2.25-2.25v-.75"
+            />
+          </svg>
+        )}
 
         <input
           disabled={isUploading}
@@ -70,8 +90,13 @@ export default function ImportSoundsButton({ onComplete }) {
           accept="audio/*, .wav, .mp3, .m4a, .flac, .aac, .ogg, .opus, .webm"
           onChange={onChange}
         />
-        {isUploading ? 'analysing voice audio...' : 'import and analyse audio folder'}
+        {isUploading ? 'analysing audio — please wait...' : 'import and analyse audio folder'}
       </label>
+      {isUploading && (
+        <p className="text-xs mt-2 max-w-xl" aria-live="polite">
+          Processing is running on the local server. Do not refresh the page or import another folder until it finishes.
+        </p>
+      )}
       <p className="text-xs mt-2 max-w-xl">
         Audio is transcribed and sliced into the <b>voice</b> and <b>mix</b> tabs; it is not added to <b>user</b>.
       </p>

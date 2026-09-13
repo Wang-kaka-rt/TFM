@@ -144,12 +144,19 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   python3 -m venv "$VENV_DIR"
 fi
 source "$VENV_DIR/bin/activate"
-python -m pip install --upgrade pip
-# Install the CPU wheels before the remaining dependencies, preventing PyPI from
-# pulling an unnecessary CUDA runtime on ordinary Linux desktops.
-python -m pip install --index-url https://download.pytorch.org/whl/cpu \
-  "torch==2.5.1+cpu" "torchaudio==2.5.1+cpu"
-python -m pip install -r "$PYTHON_DIR/requirements.linux-portable.txt"
+if python_runtime_ok; then
+  # Do not contact PyPI merely to upgrade pip when this machine already has a
+  # complete runtime.  This makes repeated setup runs usable when DNS or the
+  # Internet is temporarily unavailable.
+  echo "Python runtime dependencies are already installed."
+else
+  # Install the CPU wheels before the remaining dependencies, preventing PyPI
+  # from pulling an unnecessary CUDA runtime on ordinary Linux desktops.
+  python -m pip install --upgrade pip
+  python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+    "torch==2.5.1+cpu" "torchaudio==2.5.1+cpu"
+  python -m pip install -r "$PYTHON_DIR/requirements.linux-portable.txt"
+fi
 
 if ! has_base_model; then
   say "Downloading the faster-whisper base model for offline use"

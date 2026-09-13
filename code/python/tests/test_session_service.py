@@ -271,3 +271,29 @@ def test_browser_recorder_backend_accepts_uploaded_chunks(tmp_path):
     assert session.state.value == "stopped"
     assert session.chunk_count == 1
     assert session.word_count >= 1
+
+
+def test_import_audio_pack_transcribes_and_generates_durable_manifest(tmp_path):
+    service = SessionService(
+        Settings(
+            samples_root=tmp_path / "samples",
+            recorder_backend="microphone",  # Import must not access this recorder.
+            transcriber_backend="mock",
+            mock_transcript_words=["hola", "mundo"],
+        )
+    )
+
+    result = asyncio.run(
+        service.import_audio_pack(
+            "pack01",
+            [("voice folder/greeting.wav", _build_wav_bytes(duration_seconds=0.2))],
+        )
+    )
+
+    assert result["session_id"] == "pack01"
+    assert result["file_count"] == 1
+    assert result["word_count"] >= 1
+    assert service.get("pack01").state.value == "stopped"
+    manifest = json.loads((tmp_path / "samples" / "pack01" / "samples.json").read_text(encoding="utf-8"))
+    assert manifest["words"]
+    assert (tmp_path / "samples" / "pack01" / "words").is_dir()

@@ -8,12 +8,30 @@ VENV_DIR="$PYTHON_DIR/.venv"
 MODEL_DIR="$PYTHON_DIR/assets/models"
 MODEL_GLOB="$MODEL_DIR/models--Systran--faster-whisper-base/snapshots/*/model.bin"
 
-if [[ ! -x "$VENV_DIR/bin/python" || ! -f "$PYTHON_DIR/static/strudel/index.html" ]]; then
-  echo "Source environment is incomplete. Run: bash scripts/setup_linux_source.sh" >&2
+python_runtime_ok() {
+  [[ -x "$VENV_DIR/bin/python" ]] && "$VENV_DIR/bin/python" -c '
+import fastapi
+import multipart
+import uvicorn
+import faster_whisper
+' >/dev/null 2>&1
+}
+
+if [[ ! -x "$VENV_DIR/bin/python" || ! -f "$PYTHON_DIR/static/strudel/index.html" ]] \
+  || ! python_runtime_ok \
+  || ! compgen -G "$MODEL_GLOB" > /dev/null; then
+  echo "Source environment is incomplete or has outdated dependencies; running setup..."
+  bash "$ROOT_DIR/scripts/setup_linux_source.sh"
+fi
+
+# Setup may have been interrupted or a package installation may have failed.
+# Fail with a precise diagnostic rather than starting Uvicorn with a broken API.
+if ! python_runtime_ok; then
+  echo "Python runtime dependencies are still missing (including python-multipart)." >&2
   exit 1
 fi
 if ! compgen -G "$MODEL_GLOB" > /dev/null; then
-  echo "The offline base model is missing. Run: bash scripts/setup_linux_source.sh" >&2
+  echo "The offline base model is still missing after setup." >&2
   exit 1
 fi
 

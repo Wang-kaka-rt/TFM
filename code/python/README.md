@@ -30,8 +30,9 @@ bash scripts/setup_linux_source.sh --check
 ```
 
 The diagnostic reports the status of FFmpeg, PortAudio, libsndfile, Python,
-Node.js, pnpm, the virtual environment, the built Strudel frontend, and the
-offline speech model. It does not modify the machine.
+Node.js, pnpm, the virtual environment, the required Python runtime modules
+(including `python-multipart` for audio-package uploads), the built Strudel
+frontend, and the offline speech model. It does not modify the machine.
 
 ### 3. Install missing requirements and build everything
 
@@ -60,7 +61,9 @@ build, and model cache.
 bash scripts/run_linux_source.sh
 ```
 
-This starts Uvicorn at `http://127.0.0.1:8787/` with the verified Linux
+If a virtual environment, Python dependency, frontend build, or offline model is
+missing, this command automatically runs the setup script first. This starts
+Uvicorn at `http://127.0.0.1:8787/` with the verified Linux
 settings: browser microphone capture, `faster-whisper` base, CPU `int8`, and
 the local offline model cache. Keep the terminal open. Wait until it prints:
 

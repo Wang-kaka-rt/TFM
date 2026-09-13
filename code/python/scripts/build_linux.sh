@@ -96,6 +96,7 @@ PYINSTALLER_ARGS=(
     --hidden-import uvicorn.loops.auto
     --hidden-import "uvicorn.protocols.http.auto"
     --hidden-import "uvicorn.lifespan.on"
+    --collect-submodules multipart
     --hidden-import app.main
     --hidden-import app.api.routes
     --hidden-import app.services.panel

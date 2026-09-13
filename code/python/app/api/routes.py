@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Path as ApiPath, Query, Request, Response
+from fastapi import APIRouter, File, Form, HTTPException, Path as ApiPath, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.core.config import settings
@@ -155,6 +155,26 @@ async def upload_browser_chunk(
         raise HTTPException(status_code=404, detail=f"session '{session_id}' not found") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/imports/audio-pack", tags=["session"])
+async def import_audio_pack(
+    session_id: str = Form(..., min_length=1, max_length=64),
+    files: list[UploadFile] = File(...),
+) -> dict[str, int | str]:
+    """Import a local audio folder into the voice-processing pipeline."""
+    if not _SAFE_SESSION_ID.fullmatch(session_id) or session_id.lower() == "object_object":
+        raise HTTPException(status_code=422, detail="invalid session_id")
+    if not files:
+        raise HTTPException(status_code=400, detail="no audio files were selected")
+    try:
+        payload = [(upload.filename or "audio", await upload.read()) for upload in files]
+        return await session_service.import_audio_pack(session_id, payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        for upload in files:
+            await upload.close()
 
 
 @router.get("/status", response_model=StatusResponse, tags=["session"])

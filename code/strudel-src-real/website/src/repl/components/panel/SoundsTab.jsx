@@ -47,6 +47,14 @@ const MIX_LEVEL_LABELS = {
 };
 const MIX_LEVEL_ORDER = ['oracion', 'frase', 'palabra', 'silaba', 'letra'];
 
+// The Strudel Voice control panel keeps an import signature to avoid registering
+// the same manifest on every status poll.  Deleting a tag removes its entries
+// from soundMap, so notify that panel to invalidate its signature; otherwise a
+// later import of the same saved bank can be incorrectly treated as a no-op.
+const notifyVoiceSamplesCleared = (tag) => {
+  window.dispatchEvent(new CustomEvent('strudel-voice:samples-cleared', { detail: { tag } }));
+};
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -375,6 +383,7 @@ export function SoundsTab() {
                   }
                 }
                 soundMap.set(remaining);
+                notifyVoiceSamplesCleared('voice');
               }
             } catch (e) {
               console.error(e);
@@ -399,6 +408,7 @@ export function SoundsTab() {
                   }
                 }
                 soundMap.set(remaining);
+                notifyVoiceSamplesCleared('mix');
               }
             } catch (e) {
               console.error(e);
@@ -431,7 +441,7 @@ export function SoundsTab() {
         )}
         {!soundEntries.length && soundsFilter === 'importSounds' ? (
           <div className="prose dark:prose-invert min-w-full text-sm">
-            <ImportSoundsButton onComplete={() => settingsMap.setKey('soundsFilter', 'user')} />
+            <ImportSoundsButton onComplete={() => settingsMap.setKey('soundsFilter', 'voice')} />
             <p>
               To import sounds into strudel, they must be contained{' '}
               <a href={`${baseNoTrailing}/learn/samples/#from-disk-via-import-sounds-folder`} target="_blank">

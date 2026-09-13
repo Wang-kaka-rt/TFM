@@ -7,6 +7,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 PYTHON_SERVICE_ROOT = Path(__file__).resolve().parents[2]
 
+
+def default_samples_root() -> Path:
+    """Choose the same durable sample location for source and packaged runs.
+
+    The Windows launcher already stores recordings in Documents.  Keeping the
+    source server there too means a developer can switch between ``uvicorn``
+    and the EXE without making an existing bank appear empty.  Linux keeps the
+    repository-local location used by the portable/source setup scripts.
+    """
+    if sys.platform == "win32":
+        return Path.home() / "Documents" / "StrudelVoice" / "samples"
+    return PROJECT_ROOT / "samples"
+
+
 def resolve_env_files() -> tuple[str, ...]:
     # Only load project-local env files so desktop/user overrides cannot
     # silently change recording behavior outside the repository.
@@ -40,7 +54,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "https://strudel.cc",
     ]
-    samples_root: Path = PROJECT_ROOT / "samples"
+    samples_root: Path = Field(default_factory=default_samples_root)
     chunk_duration_seconds: float = 2.5
     # Streaming silence-based segmentation (microphone backend only). When enabled,
     # audio is sliced at natural pauses via an RMS energy gate instead of fixed

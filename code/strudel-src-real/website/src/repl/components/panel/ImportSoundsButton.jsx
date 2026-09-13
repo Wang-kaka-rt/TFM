@@ -1,23 +1,31 @@
-import React, { useCallback, useState } from 'react';
-import { registerSamplesFromDB, uploadSamplesToDB, userSamplesDBConfig } from '../../idbutils.mjs';
+import React, { useCallback, useRef, useState } from 'react';
 
-//choose a directory to locally import samples
+// The upstream Strudel control stores selected files in IndexedDB and labels
+// them "user". Strudel Voice sends them to its local backend so speech can be
+// transcribed, sliced, and registered in the voice/mix banks.
 export default function ImportSoundsButton({ onComplete }) {
-  let fileUploadRef = React.createRef();
+  const fileUploadRef = useRef(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState('');
   const onChange = useCallback(async () => {
-    if (!fileUploadRef.current.files?.length) {
-      return;
-    }
+    const files = Array.from(fileUploadRef.current?.files || []);
+    if (!files.length) return;
     setIsUploading(true);
-
-    await uploadSamplesToDB(userSamplesDBConfig, fileUploadRef.current.files).then(() => {
-      registerSamplesFromDB(userSamplesDBConfig, () => {
-        onComplete();
-        setIsUploading(false);
-      });
-    });
-  });
+    setError('');
+    try {
+      if (typeof window.strudelVoiceImportAudioPack !== 'function') {
+        throw new Error('Strudel Voice is still loading. Refresh the page and try again.');
+      }
+      await window.strudelVoiceImportAudioPack(files);
+      onComplete?.();
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : String(importError));
+    } finally {
+      setIsUploading(false);
+      // Let the user import the same folder again after delete-all.
+      if (fileUploadRef.current) fileUploadRef.current.value = '';
+    }
+  }, [onComplete]);
 
   return (
     <div>
@@ -49,13 +57,15 @@ export default function ImportSoundsButton({ onComplete }) {
           directory=""
           webkitdirectory=""
           multiple
-          accept="audio/*, .wav, .mp3, .m4a, .flac, .aac, .ogg"
-          onChange={() => {
-            onChange();
-          }}
+          accept="audio/*, .wav, .mp3, .m4a, .flac, .aac, .ogg, .opus, .webm"
+          onChange={onChange}
         />
-        {isUploading ? 'importing...' : 'import sounds folder'}
+        {isUploading ? 'analysing voice audio...' : 'import and analyse audio folder'}
       </label>
+      <p className="text-xs mt-2 max-w-xl">
+        Audio is transcribed and sliced into the <b>voice</b> and <b>mix</b> tabs; it is not added to <b>user</b>.
+      </p>
+      {error && <p className="text-xs mt-2 text-red-500">{error}</p>}
     </div>
   );
 }

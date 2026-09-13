@@ -40,6 +40,14 @@ python_ok() {
 node_ok() {
   command -v node >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)'
 }
+python_runtime_ok() {
+  [[ -x "$VENV_DIR/bin/python" ]] && "$VENV_DIR/bin/python" -c '
+import fastapi
+import multipart
+import uvicorn
+import faster_whisper
+' >/dev/null 2>&1
+}
 
 if [[ ! -d "$FRONTEND_DIR" || ! -f "$FRONTEND_DIR/package.json" ]]; then
   echo "Frontend checkout not found: $FRONTEND_DIR" >&2
@@ -62,6 +70,7 @@ if [[ "$CHECK_ONLY" == true ]]; then
   node_ok && echo "Node: $(node --version)" || echo "Node >= 20: MISSING"
   command -v pnpm >/dev/null && echo "pnpm: $(pnpm --version)" || echo "pnpm: MISSING"
   [[ -x "$VENV_DIR/bin/python" ]] && echo "Python venv: OK" || echo "Python venv: MISSING"
+  python_runtime_ok && echo "Python runtime dependencies (including uploads): OK" || echo "Python runtime dependencies (including uploads): MISSING"
   [[ -f "$STATIC_DIR/index.html" ]] && echo "Strudel static assets: OK" || echo "Strudel static assets: MISSING"
   has_base_model && echo "faster-whisper base model: OK (offline)" || echo "faster-whisper base model: MISSING"
   exit 0

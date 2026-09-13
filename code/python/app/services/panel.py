@@ -15,8 +15,21 @@ def control_panel_script(default_session_id: str) -> str:
   window.__strudelVoicePanelReady = true;
 
   const params = new URLSearchParams(window.location.search);
+  const SESSION_STORAGE_KEY = "strudel-voice:last-session";
+  let storedSessionId = "";
+  try {{
+    storedSessionId = window.localStorage.getItem(SESSION_STORAGE_KEY) || "";
+  }} catch (_error) {{
+    // Local storage can be disabled by the browser. The URL/default still work.
+  }}
+  const requestedSessionId = params.get("svSession") || "";
+  // The desktop launcher always opens the default demo session. Prefer the last
+  // bank in that case so previously recorded samples come back after reopening.
+  const initialSessionId = requestedSessionId && requestedSessionId !== {default_session_id!r}
+    ? requestedSessionId
+    : (storedSessionId || requestedSessionId || {default_session_id!r});
   const state = {{
-    sessionId: params.get("svSession") || {default_session_id!r},
+    sessionId: initialSessionId,
     baseUrl: (params.get("svBase") || window.location.origin).replace(/\\/$/, ""),
     busy: false,
     isRecording: false,
@@ -912,6 +925,13 @@ def control_panel_script(default_session_id: str) -> str:
 
   const syncSessionNameInputs = (value, source = null) => {{
     state.sessionId = value;
+    try {{
+      if (value.trim()) {{
+        window.localStorage.setItem(SESSION_STORAGE_KEY, value.trim());
+      }}
+    }} catch (_error) {{
+      // Persistence of the selected bank is a convenience, never a blocker.
+    }}
     if (source !== sessionInput) {{
       sessionInput.value = value;
     }}
@@ -1334,6 +1354,28 @@ def control_panel_script(default_session_id: str) -> str:
       setStatus(`Importacion automatica: ${{summaryParts.join(", ")}}.`);
     }}
     return true;
+  }};
+
+  const restorePersistedSamples = async (attempt = 0) => {{
+    try {{
+      const manifest = await fetchManifest(sessionInput.value.trim(), true);
+      if (!manifest) {{
+        return false;
+      }}
+      const imported = await importSamplesIntoStrudel({{ manifest, force: true }});
+      await refreshWordPreview();
+      if (imported) {{
+        setStatus("Muestras guardadas restauradas en voice y mix.");
+      }}
+      return imported;
+    }} catch (_error) {{
+      // Strudel may still be initialising when this panel is injected. Retry a
+      // few times; a missing saved manifest remains a harmless no-op.
+      if (attempt < 5) {{
+        window.setTimeout(() => {{ void restorePersistedSamples(attempt + 1); }}, 500);
+      }}
+      return false;
+    }}
   }};
 
   const queueAutoImport = (options = {{}}) => {{
@@ -2231,8 +2273,70 @@ def control_panel_script(default_session_id: str) -> str:
     await startRecording();
   }});
 
-  importButton.addEventListener("click", () => {{
-    setStatus("La importacion ahora es automatica. Usa el interruptor de grabacion para importar en tiempo real.");
+  importButton.addEventListener("click", async () => {{
+    try {{
+      await importSamplesIntoStrudel({{ manual: true, force: true }});
+      await refreshWordPreview();
+    }} catch (error) {{
+      setStatus(`Error al importar: ${{String(error)}}`, true);
+    }}
+  }});
+
+  // Called by Strudel's built-in "import-sounds" tab. Unlike the upstream
+  // IndexedDB-only importer, this sends the selected folder to the Python
+  // service so it can transcribe and slice it into voice/mix samples.
+  window.strudelVoiceImportAudioPack = async (files) => {{
+    const sessionId = sessionInput.value.trim();
+    if (!sessionId) {{
+      throw new Error("BankName no puede estar vacio.");
+    }}
+    if (!files || !files.length) {{
+      throw new Error("Selecciona al menos un archivo de audio.");
+    }}
+    if (state.isRecording || state.busy || state.isUploading || state.isProcessing) {{
+      throw new Error("Deten la grabacion o espera a que termine el procesamiento antes de importar.");
+    }}
+
+    const formData = new FormData();
+    formData.append("session_id", sessionId);
+    for (const file of files) {{
+      formData.append("files", file, file.webkitRelativePath || file.name);
+    }}
+
+    state.isUploading = true;
+    state.isProcessing = true;
+    refreshControls();
+    setStatus(`Analizando ${{files.length}} archivo(s) de audio...`);
+    try {{
+      const response = await fetch(`${{state.baseUrl}}/imports/audio-pack`, {{ method: "POST", body: formData }});
+      if (!response.ok) {{
+        throw new Error(await formatRuntimeErrorMessage(response));
+      }}
+      const result = await response.json();
+      state.autoImportSignature = "";
+      state.autoImportSummary = "";
+      const manifest = await fetchManifest(sessionId, false);
+      await importSamplesIntoStrudel({{ manifest, manual: true, force: true }});
+      await refreshWordPreview();
+      setStatus(`${{result.file_count}} archivo(s) analizados: ${{result.word_count}} palabras. Disponibles en voice y mix.`);
+      window.dispatchEvent(new CustomEvent("strudel-voice:audio-pack-imported", {{ detail: result }}));
+      return result;
+    }} finally {{
+      state.isUploading = false;
+      state.isProcessing = false;
+      refreshControls();
+    }}
+  }};
+
+  window.addEventListener("strudel-voice:samples-cleared", (event) => {{
+    const tag = event?.detail?.tag;
+    // The sounds tab removed entries only from Strudel's in-memory map.  Keep
+    // recordings on disk, but make the next manual/automatic import register
+    // them again even when the manifest itself has not changed.
+    state.autoImportSignature = "";
+    state.autoImportSummary = "";
+    refreshControls();
+    setStatus(`Se limpio '${{tag || "voice"}}'. Para volver a cargar este banco, pulsa Importar o inicia una nueva grabacion.`);
   }});
 
   openButton.addEventListener("click", () => {{
@@ -2340,6 +2444,7 @@ def control_panel_script(default_session_id: str) -> str:
   refreshControls();
   updateStorageInfo();
   void updateRuntimeInfo();
+  void restorePersistedSamples();
   return "installed";
 }})();
 """

@@ -70,6 +70,15 @@ def test_start_stop_and_artifact_endpoints(tmp_path):
     assert metrics_response.status_code == 200
     assert metrics_response.json()["session_count"] >= 1
 
+    # A desktop restart creates a new SessionService with an empty in-memory
+    # registry. Saved artifacts must still be available so the web panel can
+    # re-register the same clips into its voice and mix tags.
+    routes.session_service = SessionService(test_service._settings)
+    restarted_client = TestClient(app)
+    assert restarted_client.get("/samples/api01/manifest").status_code == 200
+    assert restarted_client.get("/strudel/api01").status_code == 200
+    assert restarted_client.get("/metadata/api01").status_code == 200
+
 
 def test_start_rejects_invalid_session_id(tmp_path):
     test_service = SessionService(
@@ -156,3 +165,29 @@ def test_browser_chunk_endpoint_accepts_uploaded_audio(tmp_path):
     stop_response = client.post("/stop", json={"session_id": "browserapi01"})
     assert stop_response.status_code == 200
     assert stop_response.json()["session"]["state"] == "processing"
+
+
+def test_audio_pack_endpoint_generates_voice_manifest(tmp_path):
+    test_service = SessionService(
+        Settings(
+            samples_root=tmp_path / "samples",
+            recorder_backend="microphone",  # Upload must not require a microphone.
+            transcriber_backend="mock",
+            mock_transcript_words=["hola", "voz"],
+        )
+    )
+    routes.session_service = test_service
+    client = TestClient(app)
+
+    response = client.post(
+        "/imports/audio-pack",
+        data={"session_id": "importapi01"},
+        files=[("files", ("source/greeting.wav", _build_wav_bytes(), "audio/wav"))],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["file_count"] == 1
+    assert response.json()["word_count"] >= 1
+    manifest = client.get("/samples/importapi01/manifest")
+    assert manifest.status_code == 200
+    assert manifest.json()["words"]

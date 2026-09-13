@@ -1,23 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files, collect_all
+from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all
 
-datas = [('static', 'static')]
+datas = [('D:\\D盘桌面程序\\作业\\UAM毕业论文\\TFM\\code\\python\\build\\portaudio-binaries-alias\\libportaudioarm64.dll', '_sounddevice_data\\portaudio-binaries'), ('assets\\models', 'assets\\models'), ('static', 'static')]
 binaries = []
-hiddenimports = ['uvicorn', 'uvicorn.config', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'app.main', 'app.api.routes', 'faster_whisper', 'ctranslate2', 'tokenizers', 'silero_vad', 'huggingface_hub', 'av', 'sounddevice', '_cffi_backend']
-
+hiddenimports = ['sounddevice', '_cffi_backend', 'uvicorn', 'uvicorn.config', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on', 'multipart', 'multipart.multipart', 'webview', 'app.main', 'app.api.routes', 'faster_whisper', 'ctranslate2', 'tokenizers', 'huggingface_hub', 'av']
 datas += collect_data_files('app')
-
-# Collect package data files plus native shared libraries (.dylib/.so/portaudio)
-# that are NOT picked up by hiddenimports alone.
-for _pkg in ('faster_whisper', 'ctranslate2', 'tokenizers', 'silero_vad', 'av', 'sounddevice', '_sounddevice_data'):
-    _datas, _binaries, _hidden = collect_all(_pkg)
-    datas += _datas
-    binaries += _binaries
-    hiddenimports += _hidden
+tmp_ret = collect_all('sounddevice')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('_sounddevice_data')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('faster_whisper')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('ctranslate2')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('tokenizers')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['packaging/launcher.py'],
+    ['packaging\\launcher.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -25,7 +27,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch', 'whisperx', 'tensorflow', 'keras', 'pandas', 'scipy', 'sklearn', 'cv2', 'numba', 'matplotlib', 'IPython', 'jupyter_client', 'pytest'],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

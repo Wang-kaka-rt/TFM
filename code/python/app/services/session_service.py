@@ -281,26 +281,86 @@ class SessionService:
             self._runtimes[session_id] = runtime
             self._evict_stale_runtimes(keep=session_id)
 
-            session = self._manager.start(
-                session_id,
-                paths={
-                    "workspace_dir": str(runtime.workspace_dir),
-                    "raw_dir": str(runtime.raw_dir),
-                    "words_dir": str(runtime.words_dir),
-                    "phrases_dir": str(runtime.phrases_dir),
-                    "sentences_dir": str(runtime.sentences_dir),
-                    "syllables_dir": str(runtime.syllables_dir),
-                    "letters_dir": str(runtime.letters_dir),
-                    "metadata_path": str(runtime.metadata_path),
-                    "samples_path": str(runtime.samples_path),
-                    "strudel_script_path": str(runtime.strudel_script_path),
-                },
-            )
+            session = self._manager.start(session_id, paths=self._runtime_paths(runtime))
             self._write_artifacts(runtime)
             if self._effective_recorder_backend != "browser":
                 runtime.task = asyncio.create_task(self._record_session(runtime))
                 runtime.task.add_done_callback(lambda task: self._handle_runtime_task_done(runtime, task))
             return session
+
+    async def import_audio_pack(
+        self,
+        session_id: str,
+        files: list[tuple[str, bytes]],
+    ) -> dict[str, int | str]:
+        """Transcribe and slice a user-selected audio folder without recording.
+
+        This is deliberately separate from ``start``: importing a folder must not
+        initialise or capture from a microphone.  Its output uses the same durable
+        manifest as a recording session, so the UI can register it in ``voice`` and
+        ``mix`` instead of Strudel's generic ``user`` bank.
+        """
+        if not files:
+            raise RuntimeError("No audio files were selected.")
+        if self._settings.transcriber_backend != "mock" and self._effective_transcriber_backend == "mock":
+            raise RuntimeError(
+                "Real speech recognition is unavailable; "
+                f"failed to initialize '{self._settings.transcriber_backend}': {self._transcriber_init_error}"
+            )
+
+        async with self._lock:
+            active = self._manager.active()
+            if active is not None:
+                raise RuntimeError("Stop the active recording before importing an audio folder.")
+
+            runtime = self._build_runtime(session_id)
+            self._reset_workspace(runtime)
+            self._runtimes[session_id] = runtime
+            self._evict_stale_runtimes(keep=session_id)
+            self._manager.start(session_id, paths=self._runtime_paths(runtime))
+            self._manager.set_processing(session_id, event="importing", release_active=True)
+
+            processed_files = 0
+            try:
+                for uploaded_name, audio_bytes in files:
+                    if not audio_bytes:
+                        continue
+                    runtime.next_chunk_index += 1
+                    chunk_index = runtime.next_chunk_index
+                    source_path = self._write_imported_audio(
+                        runtime, chunk_index, uploaded_name, audio_bytes
+                    )
+                    audio_path = await asyncio.to_thread(
+                        self._convert_imported_audio_to_wav, source_path, chunk_index
+                    )
+                    audio_info = await asyncio.to_thread(get_wav_audio_info, audio_path)
+                    if audio_info.duration_seconds <= 0:
+                        raise RuntimeError(f"Imported file '{uploaded_name}' has zero duration.")
+                    await self._process_chunk(
+                        runtime, audio_path, audio_info, chunk_index, time.perf_counter()
+                    )
+                    processed_files += 1
+
+                if not processed_files:
+                    raise RuntimeError("No non-empty audio files were received.")
+                if self._settings.enable_refinement:
+                    await asyncio.to_thread(self._refine_runtime_words, runtime)
+                self._write_artifacts(runtime)
+                session = self._manager.stop(session_id)
+            except Exception as exc:
+                self._manager.fail(session_id, str(exc))
+                raise
+
+        return {
+            "session_id": session_id,
+            "file_count": processed_files,
+            "chunk_count": session.chunk_count,
+            "word_count": session.word_count,
+            "phrase_count": session.phrase_count,
+            "sentence_count": session.sentence_count,
+            "syllable_count": session.syllable_count,
+            "letter_count": session.letter_count,
+        }
 
     async def stop(self, session_id: str) -> SessionInfo:
         runtime = self._require_runtime(session_id)
@@ -321,16 +381,40 @@ class SessionService:
         return self._manager.all()
 
     def get_strudel_script_path(self, session_id: str) -> Path:
-        runtime = self._require_runtime(session_id)
-        return runtime.strudel_script_path
+        return self._artifact_path(session_id, "strudel_script_path")
 
     def get_samples_manifest_path(self, session_id: str) -> Path:
-        runtime = self._require_runtime(session_id)
-        return runtime.samples_path
+        return self._artifact_path(session_id, "samples_path")
 
     def get_metadata_path(self, session_id: str) -> Path:
-        runtime = self._require_runtime(session_id)
-        return runtime.metadata_path
+        return self._artifact_path(session_id, "metadata_path")
+
+    def _artifact_path(self, session_id: str, artifact: str) -> Path:
+        """Resolve an artifact for a live session or one saved before a restart.
+
+        Audio artifacts are deliberately durable under ``samples_root/<session>``.
+        The in-memory runtime registry is not: it is rebuilt whenever the desktop
+        application starts.  Serving the saved manifest/script directly lets the
+        panel restore both Strudel tags (``voice`` and ``mix``) after a restart.
+        """
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None:
+            return getattr(runtime, artifact)
+
+        workspace_dir = (self.samples_root / session_id).resolve()
+        try:
+            workspace_dir.relative_to(self.samples_root)
+        except ValueError as exc:
+            raise SessionNotFoundError(session_id) from exc
+        if not workspace_dir.is_dir():
+            raise SessionNotFoundError(session_id)
+
+        file_names = {
+            "strudel_script_path": "strudel.js",
+            "samples_path": "samples.json",
+            "metadata_path": "metadata.json",
+        }
+        return workspace_dir / file_names[artifact]
 
     def get_metrics(self) -> dict[str, int]:
         sessions = self._manager.all()
@@ -611,6 +695,58 @@ class SessionService:
             samples_path=workspace_dir / "samples.json",
             strudel_script_path=workspace_dir / "strudel.js",
         )
+
+    @staticmethod
+    def _runtime_paths(runtime: SessionRuntime) -> dict[str, str]:
+        return {
+            "workspace_dir": str(runtime.workspace_dir),
+            "raw_dir": str(runtime.raw_dir),
+            "words_dir": str(runtime.words_dir),
+            "phrases_dir": str(runtime.phrases_dir),
+            "sentences_dir": str(runtime.sentences_dir),
+            "syllables_dir": str(runtime.syllables_dir),
+            "letters_dir": str(runtime.letters_dir),
+            "metadata_path": str(runtime.metadata_path),
+            "samples_path": str(runtime.samples_path),
+            "strudel_script_path": str(runtime.strudel_script_path),
+        }
+
+    @staticmethod
+    def _safe_import_file_name(file_name: str) -> str:
+        name = Path(file_name).name.strip()
+        if not name:
+            raise RuntimeError("An imported audio file has no file name.")
+        suffix = Path(name).suffix.lower()
+        allowed_suffixes = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus", ".webm"}
+        if suffix not in allowed_suffixes:
+            raise RuntimeError(f"Unsupported audio type '{suffix or 'unknown'}' for '{name}'.")
+        safe_stem = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in Path(name).stem)
+        return f"{safe_stem or 'audio'}{suffix}"
+
+    def _write_imported_audio(
+        self, runtime: SessionRuntime, chunk_index: int, file_name: str, audio_bytes: bytes
+    ) -> Path:
+        safe_name = self._safe_import_file_name(file_name)
+        target = runtime.raw_dir / f"import_{chunk_index:04d}_{safe_name}"
+        target.write_bytes(audio_bytes)
+        return target
+
+    @staticmethod
+    def _convert_imported_audio_to_wav(source_path: Path, chunk_index: int) -> Path:
+        target_path = source_path.with_name(f"import_{chunk_index:04d}.wav")
+        if source_path.suffix.lower() == ".wav":
+            shutil.copyfile(source_path, target_path)
+            return target_path
+        if AudioSegment is None:
+            raise RuntimeError(
+                "Cannot convert this audio type because FFmpeg is unavailable. "
+                "Install FFmpeg or import WAV files."
+            )
+        try:
+            AudioSegment.from_file(source_path).export(target_path, format="wav")
+        except Exception as exc:
+            raise RuntimeError(f"Could not decode '{source_path.name}': {exc}") from exc
+        return target_path
 
     def _reset_workspace(self, runtime: SessionRuntime) -> None:
         if runtime.workspace_dir.exists():

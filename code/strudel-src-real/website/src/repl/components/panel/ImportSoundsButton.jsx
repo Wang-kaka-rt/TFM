@@ -16,7 +16,11 @@ export default function ImportSoundsButton({ onComplete }) {
     // A Strudel Voice result folder contains a manifest plus hundreds or
     // thousands of generated clips. Restore it rather than re-uploading every
     // clip for a second transcription pass.
-    const isGeneratedBank = selectedFiles.some((file) => file.name.toLowerCase() === 'samples.json');
+    const generatedManifest = selectedFiles.find((file) => file.name.toLowerCase() === 'samples.json');
+    const isGeneratedBank = Boolean(generatedManifest);
+    const generatedBankName = String(generatedManifest?.webkitRelativePath || '')
+      .split('/')
+      .filter(Boolean)[0] || '';
     // Folder pickers can include .DS_Store, README files and thumbnails. Send
     // only formats the backend can decode, protecting the selected voice bank.
     const files = selectedFiles.filter((file) => SUPPORTED_AUDIO.test(file.name));
@@ -33,7 +37,7 @@ export default function ImportSoundsButton({ onComplete }) {
         if (typeof window.strudelVoiceRestoreGeneratedBank !== 'function') {
           throw new Error('Strudel Voice is still loading. Refresh the page and try again.');
         }
-        await window.strudelVoiceRestoreGeneratedBank();
+        await window.strudelVoiceRestoreGeneratedBank(generatedBankName);
       } else if (typeof window.strudelVoiceImportAudioPack !== 'function') {
         throw new Error('Strudel Voice is still loading. Refresh the page and try again.');
       } else {

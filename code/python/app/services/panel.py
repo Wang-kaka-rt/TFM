@@ -2352,7 +2352,13 @@ def control_panel_script(default_session_id: str) -> str:
   // generated clips. Do not upload those clips again: the browser/framework
   // can reject thousands of files before the request reaches this service.
   // Instead, reload the manifest for the selected BankName and register it.
-  window.strudelVoiceRestoreGeneratedBank = async () => {{
+  window.strudelVoiceRestoreGeneratedBank = async (requestedSessionId = "") => {{
+    // The import-sounds folder picker knows the selected output-folder name.
+    // Adopt it before restoring so selecting demo02 never silently restores
+    // the previously active demo01 BankName.
+    if (String(requestedSessionId || "").trim()) {{
+      syncSessionNameInputs(String(requestedSessionId).trim());
+    }}
     const sessionId = sessionInput.value.trim();
     if (!sessionId) {{
       throw new Error("BankName no puede estar vacio.");

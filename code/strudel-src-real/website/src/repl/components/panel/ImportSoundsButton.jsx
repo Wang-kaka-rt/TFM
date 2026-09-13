@@ -8,30 +8,43 @@ const SUPPORTED_AUDIO = /\.(wav|mp3|m4a|flac|aac|ogg|opus|webm)$/i;
 export default function ImportSoundsButton({ onComplete }) {
   const fileUploadRef = useRef(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [importMode, setImportMode] = useState('');
   const [error, setError] = useState('');
   const onChange = useCallback(async () => {
     const selectedFiles = Array.from(fileUploadRef.current?.files || []);
     if (!selectedFiles.length) return;
+    // A Strudel Voice result folder contains a manifest plus hundreds or
+    // thousands of generated clips. Restore it rather than re-uploading every
+    // clip for a second transcription pass.
+    const isGeneratedBank = selectedFiles.some((file) => file.name.toLowerCase() === 'samples.json');
     // Folder pickers can include .DS_Store, README files and thumbnails. Send
     // only formats the backend can decode, protecting the selected voice bank.
     const files = selectedFiles.filter((file) => SUPPORTED_AUDIO.test(file.name));
-    if (!files.length) {
+    if (!isGeneratedBank && !files.length) {
       setError('No supported audio files were found in the selected folder.');
       if (fileUploadRef.current) fileUploadRef.current.value = '';
       return;
     }
     setIsUploading(true);
-    setError(files.length === selectedFiles.length ? '' : `Ignored ${selectedFiles.length - files.length} non-audio file(s).`);
+    setImportMode(isGeneratedBank ? 'restore' : 'analyse');
+    setError(isGeneratedBank || files.length === selectedFiles.length ? '' : `Ignored ${selectedFiles.length - files.length} non-audio file(s).`);
     try {
-      if (typeof window.strudelVoiceImportAudioPack !== 'function') {
+      if (isGeneratedBank) {
+        if (typeof window.strudelVoiceRestoreGeneratedBank !== 'function') {
+          throw new Error('Strudel Voice is still loading. Refresh the page and try again.');
+        }
+        await window.strudelVoiceRestoreGeneratedBank();
+      } else if (typeof window.strudelVoiceImportAudioPack !== 'function') {
         throw new Error('Strudel Voice is still loading. Refresh the page and try again.');
+      } else {
+        await window.strudelVoiceImportAudioPack(files);
       }
-      await window.strudelVoiceImportAudioPack(files);
       onComplete?.();
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : String(importError));
     } finally {
       setIsUploading(false);
+      setImportMode('');
       // Let the user import the same folder again after delete-all.
       if (fileUploadRef.current) fileUploadRef.current.value = '';
     }
@@ -90,15 +103,21 @@ export default function ImportSoundsButton({ onComplete }) {
           accept="audio/*, .wav, .mp3, .m4a, .flac, .aac, .ogg, .opus, .webm"
           onChange={onChange}
         />
-        {isUploading ? 'analysing audio — please wait...' : 'import and analyse audio folder'}
+        {isUploading
+          ? importMode === 'restore'
+            ? 'restoring generated samples...'
+            : 'analysing audio — please wait...'
+          : 'import and analyse audio folder'}
       </label>
       {isUploading && (
         <p className="text-xs mt-2 max-w-xl" aria-live="polite">
-          Processing is running on the local server. Do not refresh the page or import another folder until it finishes.
+          {importMode === 'restore'
+            ? 'Restoring the generated samples directly into voice and mix. Do not refresh the page yet.'
+            : 'Processing is running on the local server. Do not refresh the page or import another folder until it finishes.'}
         </p>
       )}
       <p className="text-xs mt-2 max-w-xl">
-        Audio is transcribed and sliced into the <b>voice</b> and <b>mix</b> tabs; it is not added to <b>user</b>.
+        Raw audio is transcribed and sliced into <b>voice</b> and <b>mix</b>. A folder containing <code>samples.json</code> restores its generated samples directly.
       </p>
       {error && <p className="text-xs mt-2 text-red-500">{error}</p>}
     </div>

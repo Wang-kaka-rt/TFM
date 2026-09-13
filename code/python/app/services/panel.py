@@ -2348,6 +2348,38 @@ def control_panel_script(default_session_id: str) -> str:
     }}
   }};
 
+  // A Strudel Voice output folder already contains samples.json and all the
+  // generated clips. Do not upload those clips again: the browser/framework
+  // can reject thousands of files before the request reaches this service.
+  // Instead, reload the manifest for the selected BankName and register it.
+  window.strudelVoiceRestoreGeneratedBank = async () => {{
+    const sessionId = sessionInput.value.trim();
+    if (!sessionId) {{
+      throw new Error("BankName no puede estar vacio.");
+    }}
+    const session = await fetchSessionStatus(sessionId);
+    if (session?.state === "recording" || session?.state === "processing") {{
+      throw new Error("Deten la grabacion o espera a que termine el procesamiento antes de restaurar las muestras.");
+    }}
+    state.isUploading = true;
+    state.isProcessing = true;
+    refreshControls();
+    setStatus(`Restaurando muestras generadas de ${{sessionId}}...`);
+    try {{
+      state.autoImportSignature = "";
+      state.autoImportSummary = "";
+      const manifest = await fetchManifest(sessionId, false);
+      await importSamplesIntoStrudel({{ manifest, manual: true, force: true }});
+      await refreshWordPreview();
+      setStatus("Muestras generadas restauradas en los bancos voice y mix.");
+      return manifest;
+    }} finally {{
+      state.isUploading = false;
+      state.isProcessing = false;
+      refreshControls();
+    }}
+  }};
+
   window.addEventListener("strudel-voice:samples-cleared", (event) => {{
     const tag = event?.detail?.tag;
     // The sounds tab removed entries only from Strudel's in-memory map.  Keep
